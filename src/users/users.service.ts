@@ -41,7 +41,8 @@ export class UsersService {
 
   async createOrUpdateGoogleUser(
     email: string,
-    name: string,
+    firstName: string,
+    lastName: string,
     googleId: string,
     avatar: string,
     role: UserRole,
@@ -50,7 +51,8 @@ export class UsersService {
 
     if (user) {
       // Update existing user
-      user.name = name;
+      user.first_name = firstName;
+      user.last_name = lastName;
       user.avatar = avatar;
       return this.usersRepository.save(user);
     }
@@ -69,12 +71,13 @@ export class UsersService {
     // Create new user
     user = this.usersRepository.create({
       email,
-      name,
+      first_name: firstName,
+      last_name: lastName,
       googleId,
       avatar,
       role,
       isEmailVerified: true,
-      password: null, // Google users don't have password
+      password: undefined, // Google users don't have password
     });
 
     return this.usersRepository.save(user);

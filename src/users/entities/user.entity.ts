@@ -7,7 +7,7 @@ import {
   BeforeInsert,
   BeforeUpdate,
 } from 'typeorm';
-import { Exclude } from 'class-transformer';
+import { Exclude, Expose } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
 import { UserRole } from '../../common/enums/user-role.enum';
 
@@ -56,6 +56,15 @@ export class User {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  /**
+   * Virtual field — not in the DB
+   * Computed on the fly and exposed during serialization
+   */
+  @Expose()
+  get name(): string {
+    return `${this.first_name} ${this.last_name}`.trim();
+  }
 
   @BeforeInsert()
   @BeforeUpdate()
