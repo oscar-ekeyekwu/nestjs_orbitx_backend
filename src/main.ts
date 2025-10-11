@@ -10,7 +10,8 @@ async function bootstrap() {
 
   // Enable CORS
   app.enableCors({
-    origin: configService.get('FRONTEND_URL') || 'http://localhost:8081',
+    origin:
+      (configService.get('FRONTEND_URL') as string) || 'http://localhost:8081',
     credentials: true,
   });
 
@@ -26,7 +27,7 @@ async function bootstrap() {
   // Global prefix
   app.setGlobalPrefix('api');
 
-  const port = configService.get('PORT') || 3000;
+  const port = (configService.get('PORT') as number) || 3000;
   await app.listen(port);
 
   console.log(`🚀 Application is running on: http://localhost:${port}/api`);

@@ -9,7 +9,7 @@ import {
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
-import { UserRole } from '../../common/enums/user-role.enum';
+import { UserRole } from '../common/enums/user-role.enum';
 
 @Entity('users')
 export class User {

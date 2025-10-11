@@ -3,7 +3,14 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { OrdersModule } from './orders/orders.module';
+import { DriversModule } from './drivers/drivers.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { NotificationsModule } from './notifications/notification.module';
 import { User } from './users/entities/user.entity';
+import { Order } from './orders/entities/order.entity';
+import { DriverProfile } from './drivers/entities/driver-profile.entity';
+import { Notification } from './notifications/entities/notification.entity';
 
 @Module({
   imports: [
@@ -20,7 +27,7 @@ import { User } from './users/entities/user.entity';
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_DATABASE'),
-        entities: [User],
+        entities: [User, Order, DriverProfile, Notification],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',
       }),
@@ -28,6 +35,10 @@ import { User } from './users/entities/user.entity';
     }),
     AuthModule,
     UsersModule,
+    OrdersModule,
+    DriversModule,
+    RealtimeModule,
+    NotificationsModule,
   ],
   controllers: [],
   providers: [],

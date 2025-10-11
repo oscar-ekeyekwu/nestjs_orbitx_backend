@@ -27,6 +27,10 @@ export class UsersService {
     return this.usersRepository.save(user);
   }
 
+  async findAll(): Promise<User[]> {
+    return this.usersRepository.find();
+  }
+
   async findByEmail(email: string): Promise<User | null> {
     return this.usersRepository.findOne({ where: { email } });
   }
@@ -45,30 +49,26 @@ export class UsersService {
     lastName: string,
     googleId: string,
     avatar: string,
-    role: UserRole,
+    role?: UserRole,
   ): Promise<User> {
     let user = await this.findByGoogleId(googleId);
 
     if (user) {
-      // Update existing user
       user.first_name = firstName;
       user.last_name = lastName;
       user.avatar = avatar;
       return this.usersRepository.save(user);
     }
 
-    // Check if email exists (user registered with email/password)
     user = await this.findByEmail(email);
 
     if (user) {
-      // Link Google account to existing user
       user.googleId = googleId;
       user.avatar = avatar;
       user.isEmailVerified = true;
       return this.usersRepository.save(user);
     }
 
-    // Create new user
     user = this.usersRepository.create({
       email,
       first_name: firstName,
@@ -77,7 +77,7 @@ export class UsersService {
       avatar,
       role,
       isEmailVerified: true,
-      password: undefined, // Google users don't have password
+      password: undefined,
     });
 
     return this.usersRepository.save(user);

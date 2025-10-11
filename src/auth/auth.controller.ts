@@ -6,10 +6,9 @@ import {
   UseGuards,
   Req,
   Res,
-  HttpStatus,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -39,7 +38,10 @@ export class AuthController {
     // You should use google-auth-library to verify the token
 
     // This is a simplified version - in production you'd decode and verify the token
-    const { token, role } = googleAuthDto;
+    // const { token } = googleAuthDto;
+    console.log(googleAuthDto);
+
+    await Promise.resolve();
 
     // Mock user data - replace with actual token verification
     return {
