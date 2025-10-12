@@ -11,7 +11,7 @@ import { User } from './users/entities/user.entity';
 import { Order } from './orders/entities/order.entity';
 import { DriverProfile } from './drivers/entities/driver-profile.entity';
 import { Notification } from './notifications/entities/notification.entity';
-
+import { DatabaseModule } from './database/database.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -26,7 +26,7 @@ import { Notification } from './notifications/entities/notification.entity';
         port: configService.get('DB_PORT'),
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD'),
-        database: configService.get('DB_DATABASE'),
+        database: configService.get('DB_NAME'),
         entities: [User, Order, DriverProfile, Notification],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',
@@ -39,6 +39,7 @@ import { Notification } from './notifications/entities/notification.entity';
     DriversModule,
     RealtimeModule,
     NotificationsModule,
+    DatabaseModule,
   ],
   controllers: [],
   providers: [],

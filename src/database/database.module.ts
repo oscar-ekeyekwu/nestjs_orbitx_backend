@@ -1,69 +1,40 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  BeforeInsert,
-  BeforeUpdate,
-} from 'typeorm';
-import { Exclude } from 'class-transformer';
-import * as bcrypt from 'bcrypt';
-import { UserRole } from '../common/enums/user-role.enum';
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { DataSourceOptions } from 'typeorm';
+import * as path from 'path';
 
-@Entity('users')
-export class User {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
 
-  @Column({ unique: true })
-  email: string;
-
-  @Column()
-  name: string;
-
-  @Column({ nullable: true })
-  @Exclude()
-  password: string;
-
-  @Column({ nullable: true })
-  phone: string;
-
-  @Column({ nullable: true })
-  avatar: string;
-
-  @Column({
-    type: 'enum',
-    enum: UserRole,
-    default: UserRole.CUSTOMER,
-  })
-  role: UserRole;
-
-  @Column({ nullable: true })
-  googleId: string;
-
-  @Column({ default: false })
-  isEmailVerified: boolean;
-
-  @Column({ default: true })
-  isActive: boolean;
-
-  @CreateDateColumn()
-  createdAt: Date;
-
-  @UpdateDateColumn()
-  updatedAt: Date;
-
-  @BeforeInsert()
-  @BeforeUpdate()
-  async hashPassword() {
-    if (this.password && !this.password.startsWith('$2b$')) {
-      this.password = await bcrypt.hash(this.password, 10);
-    }
-  }
-
-  async validatePassword(password: string): Promise<boolean> {
-    if (!this.password) return false;
-    return bcrypt.compare(password, this.password);
-  }
-}
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        console.log(config);
+        const isProd = config.get('NODE_ENV') === 'production';
+        return {
+          type: 'postgres',
+          host: config.get<string>('DB_HOST'),
+          port: config.get<number>('DB_PORT'),
+          username: config.get<string>('DB_USERNAME'),
+          password: config.get<string>('DB_PASSWORD'),
+          database: config.get<string>('DB_NAME'),
+          synchronize: false, // use migrations instead
+          entities: [path.join(__dirname, '/../**/*.entity.{ts,js}')],
+          migrations: [
+            path.join(__dirname, '/../database/migrations/*.{ts,js}'),
+          ],
+          migrationsRun: false, // auto-run migrations on startup
+          logging: !isProd,
+          ssl: isProd ? { rejectUnauthorized: false } : false,
+        } as DataSourceOptions;
+      },
+    }),
+  ],
+})
+export class DatabaseModule {}

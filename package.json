@@ -18,10 +18,9 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "prisma:build": "node prisma/build-schema.js",
-    "prisma:generate": "npm run prisma:build && npx prisma generate",
-    "prisma:push": "npm run prisma:build && npx prisma db push",
-    "prisma:migrate": "npm run prisma:build && npx prisma migrate dev"
+    "migration:generate": "node scripts/generate-migration.js",
+    "migration:run": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:run -d ./ormconfig.ts",
+    "migration:revert": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:revert -d ./ormconfig.ts"
   },
   "dependencies": {
     "@nestjs-modules/mailer": "^2.0.2",
@@ -44,11 +43,13 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
     "pg": "^8.16.3",
+    "postgis": "^1.0.6",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.1",
     "twilio": "^5.10.2",
-    "typeorm": "^0.3.27"
+    "typeorm": "^0.3.27",
+    "typeorm-cli": "^1.0.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
