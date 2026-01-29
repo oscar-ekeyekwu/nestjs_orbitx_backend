@@ -3,17 +3,64 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   const configService = app.get(ConfigService);
 
-  // Enable CORS
+  // Serve static files from uploads directory
+  app.useStaticAssets(join(__dirname, '..', 'uploads'), {
+    prefix: '/uploads/',
+  });
+
+  // Enable CORS for mobile apps and web
+  const allowedOrigins = [
+    configService.get('FRONTEND_URL') || 'http://localhost:8081',
+    'http://localhost:8081', // React Native dev
+    'exp://localhost:8081', // Expo dev
+    'http://10.0.2.2:8081', // Android emulator
+    'http://192.168.*.*:8081', // Local network (React Native)
+  ];
+
   app.enableCors({
-    origin:
-      (configService.get('FRONTEND_URL') as string) || 'http://localhost:8081',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, Postman, etc.)
+      if (!origin) return callback(null, true);
+
+      // Check if origin matches allowed patterns
+      const isAllowed = allowedOrigins.some((allowedOrigin) => {
+        if (allowedOrigin.includes('*')) {
+          const regex = new RegExp(
+            '^' + allowedOrigin.replace(/\*/g, '.*') + '$',
+          );
+          return regex.test(origin);
+        }
+        return allowedOrigin === origin;
+      });
+
+      if (isAllowed) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+      'User-Agent',
+    ],
+    exposedHeaders: ['Content-Range', 'X-Content-Range'],
+    maxAge: 3600,
   });
 
   // Global validation pipe
@@ -25,19 +72,32 @@ async function bootstrap() {
     }),
   );
 
-  // Global prefix
-  app.setGlobalPrefix('api');
+  // Global prefix with versioning
+  app.setGlobalPrefix('api/v1');
+
+  // ✅ Global interceptor for success responses
+  app.useGlobalInterceptors(new ResponseInterceptor());
+
+  // ✅ Global filter for errors
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   // --- Swagger Config ---
   const config = new DocumentBuilder()
     .setTitle('OrbitX Dispatch API')
     .setDescription('API documentation for the OrbitX Dispatch Application')
     .setVersion('1.0')
-    .addBearerAuth() // Enables JWT authentication header support
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+      in: 'header',
+      name: 'Authorization',
+      description: 'Enter your JWT token in the format: Bearer <token>',
+    }) // Enables JWT authentication header support
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document, {
+  SwaggerModule.setup('api/v1/docs', app, document, {
     swaggerOptions: {
       persistAuthorization: true, // Keep JWT auth after reload
     },
@@ -46,7 +106,8 @@ async function bootstrap() {
   const port = (configService.get('PORT') as number) || 3000;
   await app.listen(port);
 
-  console.log(`🚀 Application is running on: http://localhost:${port}/api`);
+  console.log(`🚀 Application is running on: http://localhost:${port}/api/v1`);
+  console.log(`📚 Swagger docs available at: http://localhost:${port}/api/v1/docs`);
 }
 
 bootstrap();

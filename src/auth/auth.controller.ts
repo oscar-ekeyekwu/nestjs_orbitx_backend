@@ -6,29 +6,63 @@ import {
   UseGuards,
   Req,
   Res,
+  Ip,
+  Headers,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import type { Response } from 'express';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import type { Response, Request } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { GoogleAuthDto } from './dto/google-auth.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
+import { VerifyEmailDto } from '../email/dto/verify-email.dto';
 
+@ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('register')
-  async register(@Body() registerDto: RegisterDto) {
+  @Throttle({ default: { ttl: 60000, limit: 3 } }) // 3 registrations per minute
+  @ApiOperation({ summary: 'Register a new user' })
+  async register(
+    @Body() registerDto: RegisterDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
     return this.authService.register(registerDto);
   }
 
   @Post('login')
-  async login(@Body() loginDto: LoginDto) {
+  @Throttle({ default: { ttl: 60000, limit: 5 } }) // 5 login attempts per minute
+  @ApiOperation({ summary: 'Login user' })
+  async login(
+    @Body() loginDto: LoginDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
     return this.authService.login(loginDto);
+  }
+
+  @Post('refresh')
+  @Throttle({ default: { ttl: 60000, limit: 10 } }) // 10 refresh attempts per minute
+  @ApiOperation({ summary: 'Refresh access token' })
+  async refresh(
+    @Body() refreshTokenDto: RefreshTokenDto,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.authService.refreshAccessToken(
+      refreshTokenDto,
+      ipAddress,
+      userAgent,
+    );
   }
 
   @Post('google')
@@ -73,16 +107,70 @@ export class AuthController {
   }
 
   @Get('profile')
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get current user profile' })
   async getProfile(@CurrentUser() user: User) {
     return this.authService.getProfile(user.id);
   }
 
-  @Post('logout')
+  @Post('send-verification-email')
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  async logout() {
-    // In a stateless JWT setup, logout is handled client-side
-    // If you want to implement token blacklisting, do it here
+  @Throttle({ default: { ttl: 60000, limit: 3 } }) // 3 requests per minute
+  @ApiOperation({ summary: 'Send email verification code' })
+  async sendVerificationEmail(@CurrentUser() user: User) {
+    await this.authService.sendVerificationEmail(user.id, user.email);
+    return {
+      message: 'Verification code sent to your email',
+      email: user.email,
+    };
+  }
+
+  @Post('verify-email')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { ttl: 60000, limit: 5 } }) // 5 attempts per minute
+  @ApiOperation({ summary: 'Verify email with code' })
+  async verifyEmail(
+    @CurrentUser() user: User,
+    @Body() verifyEmailDto: VerifyEmailDto,
+  ) {
+    await this.authService.verifyEmail(user.id, verifyEmailDto.code);
+    return {
+      message: 'Email verified successfully',
+      isEmailVerified: true,
+    };
+  }
+
+  @Post('resend-verification-email')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { ttl: 120000, limit: 2 } }) // 2 requests per 2 minutes
+  @ApiOperation({ summary: 'Resend verification email' })
+  async resendVerificationEmail(@CurrentUser() user: User) {
+    await this.authService.sendVerificationEmail(user.id, user.email);
+    return {
+      message: 'Verification code resent to your email',
+      email: user.email,
+    };
+  }
+
+  @Post('logout')
+  @ApiOperation({ summary: 'Logout and revoke refresh token' })
+  async logout(@Body() body: { refresh_token?: string }) {
+    if (body.refresh_token) {
+      await this.authService.revokeRefreshToken(body.refresh_token);
+    }
     return { message: 'Logged out successfully' };
+  }
+
+  @Post('logout-all')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Logout from all devices' })
+  async logoutAll(@CurrentUser() user: User) {
+    await this.authService.revokeAllUserTokens(user.id);
+    return { message: 'Logged out from all devices successfully' };
   }
 }

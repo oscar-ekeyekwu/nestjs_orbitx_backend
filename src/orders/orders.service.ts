@@ -10,19 +10,30 @@ import { Order, OrderStatus, PackageSize } from './entities/order.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UserRole } from '../common/enums/user-role.enum';
+import { WalletService } from '../wallet/wallet.service';
+import { SystemConfigService } from '../config/config.service';
+import { ConfigKey } from '../config/enums/config-keys.enum';
+import { PaymentMethod } from '../wallet/entities/transaction.entity';
+import {
+  PaginationDto,
+  PaginatedResult,
+  createPaginatedResponse,
+} from '../common/dto/pagination.dto';
 
 @Injectable()
 export class OrdersService {
   constructor(
     @InjectRepository(Order)
     private ordersRepository: Repository<Order>,
+    private walletService: WalletService,
+    private configService: SystemConfigService,
   ) {}
 
   async create(
     createOrderDto: CreateOrderDto,
     customerId: string,
   ): Promise<Order> {
-    const estimatedPrice = this.calculatePrice(
+    const estimatedPrice = await this.calculatePrice(
       createOrderDto.pickupLatitude,
       createOrderDto.pickupLongitude,
       createOrderDto.deliveryLatitude,
@@ -43,8 +54,9 @@ export class OrdersService {
   async findAll(
     userId: string,
     userRole: UserRole,
+    paginationDto: PaginationDto,
     status?: OrderStatus,
-  ): Promise<Order[]> {
+  ): Promise<PaginatedResult<Order>> {
     const query = this.ordersRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.customer', 'customer')
@@ -60,16 +72,32 @@ export class OrdersService {
       query.andWhere('order.status = :status', { status });
     }
 
-    query.orderBy('order.createdAt', 'DESC');
+    query
+      .orderBy('order.createdAt', 'DESC')
+      .skip(paginationDto.skip)
+      .take(paginationDto.limit);
 
-    return query.getMany();
+    const [orders, total] = await query.getManyAndCount();
+
+    return createPaginatedResponse(
+      orders,
+      total,
+      paginationDto.page!,
+      paginationDto.limit!,
+    );
   }
 
   async findAvailableOrders(
     driverLat: number,
     driverLng: number,
   ): Promise<Order[]> {
-    // Find pending orders within 50km radius
+    // Get delivery radius from config
+    const deliveryRadiusKm = await this.configService.getNumber(
+      ConfigKey.ORDER_DELIVERY_RADIUS_KM,
+      50,
+    );
+
+    // Find pending orders
     const orders = await this.ordersRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.customer', 'customer')
@@ -77,7 +105,7 @@ export class OrdersService {
       .orderBy('order.createdAt', 'ASC')
       .getMany();
 
-    // Calculate distance and filter
+    // Calculate distance and filter by configured radius
     return orders
       .map((order) => ({
         ...order,
@@ -88,7 +116,7 @@ export class OrdersService {
           order.pickupLongitude,
         ),
       }))
-      .filter((order) => order.distance <= 50) // 50km radius
+      .filter((order) => order.distance <= deliveryRadiusKm)
       .sort((a, b) => a.distance - b.distance);
   }
 
@@ -110,6 +138,18 @@ export class OrdersService {
 
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException('Order is not available');
+    }
+
+    // Check if driver meets minimum balance requirement
+    const canTakeOrder = await this.walletService.canDriverTakeOrder(driverId);
+    if (!canTakeOrder) {
+      const minBalance = await this.configService.getNumber(
+        ConfigKey.DRIVER_MIN_BALANCE,
+        0,
+      );
+      throw new BadRequestException(
+        `Insufficient balance. Minimum balance of ₦${minBalance} required to accept orders`,
+      );
     }
 
     order.driverId = driverId;
@@ -152,6 +192,16 @@ export class OrdersService {
     ) {
       order.deliveredAt = new Date();
       order.finalPrice = order.estimatedPrice;
+
+      // Process payment to driver's wallet (cash payment by default)
+      if (order.driverId) {
+        await this.walletService.processOrderPayment(
+          order.driverId,
+          order.id,
+          Number(order.finalPrice),
+          PaymentMethod.CASH,
+        );
+      }
     }
 
     return this.ordersRepository.save(order);
@@ -214,13 +264,13 @@ export class OrdersService {
     }
   }
 
-  private calculatePrice(
+  private async calculatePrice(
     pickupLat: number,
     pickupLng: number,
     deliveryLat: number,
     deliveryLng: number,
     packageSize: PackageSize,
-  ): number {
+  ): Promise<number> {
     const distance = this.calculateDistance(
       pickupLat,
       pickupLng,
@@ -228,13 +278,29 @@ export class OrdersService {
       deliveryLng,
     );
 
-    const basePrice = 1000; // ₦1,000 base
-    const pricePerKm = 100; // ₦100 per km
+    // Get pricing configuration
+    const basePrice = await this.configService.getNumber(
+      ConfigKey.ORDER_BASE_PRICE,
+      1000,
+    );
+    const pricePerKm = await this.configService.getNumber(
+      ConfigKey.ORDER_PRICE_PER_KM,
+      100,
+    );
 
     const sizeMultiplier = {
-      [PackageSize.SMALL]: 1,
-      [PackageSize.MEDIUM]: 1.5,
-      [PackageSize.LARGE]: 2,
+      [PackageSize.SMALL]: await this.configService.getNumber(
+        ConfigKey.PACKAGE_SIZE_SMALL_MULTIPLIER,
+        1,
+      ),
+      [PackageSize.MEDIUM]: await this.configService.getNumber(
+        ConfigKey.PACKAGE_SIZE_MEDIUM_MULTIPLIER,
+        1.5,
+      ),
+      [PackageSize.LARGE]: await this.configService.getNumber(
+        ConfigKey.PACKAGE_SIZE_LARGE_MULTIPLIER,
+        2,
+      ),
     };
 
     const distancePrice = distance * pricePerKm;
