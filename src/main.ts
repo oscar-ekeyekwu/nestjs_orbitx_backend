@@ -104,10 +104,13 @@ async function bootstrap() {
   });
 
   const port = (configService.get('PORT') as number) || 3000;
-  await app.listen(port);
+  const IP = (configService.get('IP') as string) || '0.0.0.0';
+  await app.listen(port, IP);
 
   console.log(`🚀 Application is running on: http://localhost:${port}/api/v1`);
-  console.log(`📚 Swagger docs available at: http://localhost:${port}/api/v1/docs`);
+  console.log(
+    `📚 Swagger docs available at: http://localhost:${port}/api/v1/docs`,
+  );
 }
 
 bootstrap();
