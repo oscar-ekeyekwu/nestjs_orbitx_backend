@@ -55,8 +55,11 @@
     "socket.io": "^4.8.1",
     "swagger-ui-express": "^5.0.1",
     "twilio": "^5.10.2",
-    "typeorm": "^0.3.27",
-    "typeorm-cli": "^1.0.7"
+    "typeorm": "^0.3.28",
+    "typeorm-cli": "^1.0.7",
+    "ts-loader": "^9.5.2",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
