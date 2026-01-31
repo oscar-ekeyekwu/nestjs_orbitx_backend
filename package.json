@@ -20,7 +20,9 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "migration:generate": "node scripts/generate-migration.js",
     "migration:run": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:run -d ./ormconfig.ts",
-    "migration:revert": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:revert -d ./ormconfig.ts"
+    "migration:run:prod": "node ./node_modules/typeorm/cli.js migration:run -d ./dist/ormconfig.js",
+    "migration:revert": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:revert -d ./ormconfig.ts",
+    "migration:revert:prod": "node ./node_modules/typeorm/cli.js migration:revert -d ./dist/ormconfig.js"
   },
   "dependencies": {
     "@nestjs-modules/mailer": "^2.0.2",
@@ -39,6 +41,7 @@
     "@nestjs/websockets": "^11.1.6",
     "@sendgrid/mail": "^8.1.6",
     "bcrypt": "^6.0.0",
+    "dotenv": "^16.4.5",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "firebase-admin": "^13.6.0",
