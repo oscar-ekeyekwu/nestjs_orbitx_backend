@@ -11,7 +11,7 @@ jobs:
   deploy:
     if: >
       github.event.pull_request.merged == true &&
-      github.event.pull_request.head.ref == 'dev'
+      github.event.pull_request.head.ref == 'development'
     runs-on: ubuntu-latest
     permissions:
       contents: read
