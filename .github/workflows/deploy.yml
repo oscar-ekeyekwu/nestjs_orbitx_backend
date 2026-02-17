@@ -1,4 +1,4 @@
-name: Deploy NestJS to EC2
+name: Deploy Orbtix App (Zero Downtime)
 
 on:
   pull_request:
@@ -11,40 +11,65 @@ jobs:
   deploy:
     if: >
       github.event.pull_request.merged == true &&
-      github.event.pull_request.head.ref == 'development'
+      github.event.pull_request.head.ref == 'dev'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          node-version: 20
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install deps
-        run: npm ci
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/orbtix-app:latest
+          docker build -t $IMAGE .
+          docker push $IMAGE
 
-      - name: Build
-        run: npm run build
-
-      - name: Upload build to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: 'dist,package.json,package-lock.json'
-          target: '/home/ubuntu/orbitx-backend'
-
-      - name: Reload app with PM2 (zero downtime)
+      - name: Deploy to Ubuntu Server
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /home/ubuntu/orbitx-backend
-            npm install --production
-            pm2 reload orbitx-backend || pm2 start dist/src/main.js --name orbitx-backend
-            pm2 save
+            IMAGE=ghcr.io/${{ github.repository_owner }}/orbtix-app:latest
+
+            echo "Pulling latest image..."
+            docker pull $IMAGE
+
+            echo "Stopping previous backup container..."
+            docker stop orbtix-app-old || true
+            docker rm orbtix-app-old || true
+
+            echo "Renaming current container..."
+            docker rename orbtix-app orbtix-app-old || true
+
+            echo "Starting new container..."
+            docker run -d \
+              --name orbtix-app \
+              --network host \
+              --restart always \
+              -e DB_HOST=${{ secrets.DB_HOST }} \
+              -e DB_PORT=${{ secrets.DB_PORT }} \
+              -e DB_NAME=${{ secrets.DB_NAME }} \
+              -e DB_USER=${{ secrets.DB_USER }} \
+              -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
+              $IMAGE
+
+            echo "Waiting for container to boot..."
+            sleep 6
+
+            echo "Removing old container..."
+            docker stop orbtix-app-old || true
+            docker rm orbtix-app-old || true
+
+            docker image prune -f

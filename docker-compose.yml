@@ -2,17 +2,31 @@ version: "3.8"
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15
     container_name: orbitx-postgres
     restart: always
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: orbitx_db
+    env_file:
+      - .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - orbitx-network
+
+  app:
+    image: ghcr.io/oscar-ekeyekwu/orbtix-app:latest
+    container_name: orbitx-app
+    restart: always
+    depends_on:
+      - postgres
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    networks:
+      - orbitx-network
 
 volumes:
   postgres_data:
+
+networks:
+  orbitx-network:
