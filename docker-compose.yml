@@ -13,7 +13,7 @@ services:
       - orbitx-network
 
   app:
-    image: ghcr.io/oscar-ekeyekwu/orbtix-app:latest
+    image: ghcr.io/oscar-ekeyekwu/orbitx-app:latest
     container_name: orbitx-app
     restart: always
     depends_on:
