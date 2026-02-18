@@ -56,7 +56,7 @@ jobs:
             docker pull ghcr.io/${{ github.repository_owner }}/orbitx-app:latest
 
             echo "Stopping existing services..."
-            docker-compose down || true
+            docker compose down || true
 
             echo "Waiting for containers to stop..."
             sleep 3
@@ -71,7 +71,7 @@ jobs:
             docker system prune -f
 
             echo "Deployment complete!"
-            docker-compose ps
+            docker compose ps
 
       - name: Copy project files to server
         uses: appleboy/scp-action@master
@@ -82,7 +82,7 @@ jobs:
           source: 'docker-compose.yml,.env.production'
           target: '/home/${{ secrets.SERVER_USER }}/orbitx-backend'
 
-      - name: Start services with docker-compose
+      - name: Start services with docker compose
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -92,14 +92,14 @@ jobs:
             DEPLOY_DIR=/home/${{ secrets.SERVER_USER }}/orbitx-backend
             cd $DEPLOY_DIR
 
-            echo "Starting services with docker-compose..."
-            docker-compose up -d
+            echo "Starting services with docker compose..."
+            docker compose up -d
 
             echo "Waiting for services to be ready..."
             sleep 10
 
             echo "Checking service status..."
-            docker-compose ps
+            docker compose ps
 
             echo "Checking app logs..."
-            docker-compose logs app | tail -20
+            docker compose logs app | tail -20
