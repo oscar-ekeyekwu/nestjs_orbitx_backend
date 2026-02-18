@@ -1,4 +1,4 @@
-name: Deploy Orbtix App (Zero Downtime)
+name: Deploy Orbitx App (Zero Downtime)
 
 on:
   pull_request:
@@ -30,7 +30,7 @@ jobs:
 
       - name: Build and Push Docker Image
         run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/orbtix-app:latest
+          IMAGE=ghcr.io/${{ github.repository_owner }}/orbitx-app:latest
           docker build -t $IMAGE .
           docker push $IMAGE
 
@@ -41,21 +41,21 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            IMAGE=ghcr.io/${{ github.repository_owner }}/orbtix-app:latest
+            IMAGE=ghcr.io/${{ github.repository_owner }}/orbitx-app:latest
 
             echo "Pulling latest image..."
             docker pull $IMAGE
 
             echo "Stopping previous backup container..."
-            docker stop orbtix-app-old || true
-            docker rm orbtix-app-old || true
+            docker stop orbitx-app-old || true
+            docker rm orbitx-app-old || true
 
             echo "Renaming current container..."
-            docker rename orbtix-app orbtix-app-old || true
+            docker rename orbitx-app orbitx-app-old || true
 
             echo "Starting new container..."
             docker run -d \
-              --name orbtix-app \
+              --name orbitx-app \
               --network host \
               --restart always \
               -e DB_HOST=${{ secrets.DB_HOST }} \
@@ -69,7 +69,7 @@ jobs:
             sleep 6
 
             echo "Removing old container..."
-            docker stop orbtix-app-old || true
-            docker rm orbtix-app-old || true
+            docker stop orbitx-app-old || true
+            docker rm orbitx-app-old || true
 
             docker image prune -f
