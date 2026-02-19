@@ -9,13 +9,19 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - orbitx-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   app:
     image: ghcr.io/oscar-ekeyekwu/orbitx-app:latest
     container_name: orbitx-app
     restart: always
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
     ports:
