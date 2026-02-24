@@ -22,7 +22,9 @@
     "migration:run": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:run -d ./ormconfig.ts",
     "migration:run:prod": "node ./node_modules/typeorm/cli.js migration:run -d ./dist/ormconfig.js",
     "migration:revert": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:revert -d ./ormconfig.ts",
-    "migration:revert:prod": "node ./node_modules/typeorm/cli.js migration:revert -d ./dist/ormconfig.js"
+    "migration:revert:prod": "node ./node_modules/typeorm/cli.js migration:revert -d ./dist/ormconfig.js",
+    "seed:admin": "ts-node -r tsconfig-paths/register src/database/seeds/admin.seed.ts",
+    "seed:admin:prod": "node dist/database/seeds/admin.seed.js"
   },
   "dependencies": {
     "@nestjs-modules/mailer": "^2.0.2",

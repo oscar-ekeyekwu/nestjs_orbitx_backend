@@ -78,5 +78,11 @@ jobs:
             echo "Checking service status..."
             docker compose ps
 
+            echo "Running database migrations..."
+            docker compose exec -T app node dist/node_modules/typeorm/cli.js migration:run -d ./dist/ormconfig.js || true
+
+            echo "Seeding admin user..."
+            docker compose exec -T app node dist/database/seeds/admin.seed.js || true
+
             echo "Checking app logs..."
             docker compose logs app | tail -20
