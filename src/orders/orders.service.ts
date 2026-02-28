@@ -15,10 +15,10 @@ import { SystemConfigService } from '../config/config.service';
 import { ConfigKey } from '../config/enums/config-keys.enum';
 import { PaymentMethod } from '../wallet/entities/transaction.entity';
 import {
-  PaginationDto,
   PaginatedResult,
   createPaginatedResponse,
 } from '../common/dto/pagination.dto';
+import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 
 @Injectable()
 export class OrdersService {
@@ -54,9 +54,9 @@ export class OrdersService {
   async findAll(
     userId: string,
     userRole: UserRole,
-    paginationDto: PaginationDto,
-    status?: OrderStatus,
+    queryDto: GetOrdersQueryDto,
   ): Promise<PaginatedResult<Order>> {
+    const { status } = queryDto;
     const query = this.ordersRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.customer', 'customer')
@@ -74,16 +74,16 @@ export class OrdersService {
 
     query
       .orderBy('order.createdAt', 'DESC')
-      .skip(paginationDto.skip)
-      .take(paginationDto.limit);
+      .skip(queryDto.skip)
+      .take(queryDto.limit);
 
     const [orders, total] = await query.getManyAndCount();
 
     return createPaginatedResponse(
       orders,
       total,
-      paginationDto.page!,
-      paginationDto.limit!,
+      queryDto.page!,
+      queryDto.limit!,
     );
   }
 
