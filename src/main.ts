@@ -21,6 +21,7 @@ async function bootstrap() {
   // Enable CORS for mobile apps and web
   const allowedOrigins = [
     configService.get('FRONTEND_URL') || 'http://localhost:8081',
+    configService.get('ADMIN_FRONTEND_URL'),
     'http://localhost:8081', // React Native dev
     'exp://localhost:8081', // Expo dev
     'http://10.0.2.2:8081', // Android emulator
