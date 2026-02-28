@@ -8,7 +8,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -18,8 +18,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../common/enums/user-role.enum';
-import { OrderStatus } from './entities/order.entity';
-import { PaginationDto } from '../common/dto/pagination.dto';
+import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 
 @ApiTags('Orders')
 @ApiBearerAuth()
@@ -37,15 +36,11 @@ export class OrdersController {
 
   @Get()
   @ApiOperation({ summary: 'Get user orders' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiQuery({ name: 'status', required: false, enum: OrderStatus })
   findAll(
     @CurrentUser() user: User,
-    @Query() paginationDto: PaginationDto,
-    @Query('status') status?: OrderStatus,
+    @Query() query: GetOrdersQueryDto,
   ) {
-    return this.ordersService.findAll(user.id, user.role, paginationDto, status);
+    return this.ordersService.findAll(user.id, user.role, query);
   }
 
   @Get('available')

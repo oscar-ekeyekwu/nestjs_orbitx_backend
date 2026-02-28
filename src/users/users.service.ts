@@ -9,10 +9,10 @@ import { User } from './entities/user.entity';
 import { RegisterDto } from '../auth/dto/register.dto';
 import { UserRole } from '../common/enums/user-role.enum';
 import {
-  PaginationDto,
   PaginatedResult,
   createPaginatedResponse,
 } from '../common/dto/pagination.dto';
+import { GetUsersQueryDto } from './dto/get-users-query.dto';
 
 @Injectable()
 export class UsersService {
@@ -32,28 +32,33 @@ export class UsersService {
     return this.usersRepository.save(user);
   }
 
-  async findAll(
-    paginationDto: PaginationDto,
-    role?: UserRole,
-  ): Promise<PaginatedResult<User>> {
+  async findAll(queryDto: GetUsersQueryDto): Promise<PaginatedResult<User>> {
+    const { role, search } = queryDto;
     const query = this.usersRepository.createQueryBuilder('user');
 
     if (role) {
-      query.where('user.role = :role', { role });
+      query.andWhere('user.role = :role', { role });
+    }
+
+    if (search) {
+      query.andWhere(
+        '(user.first_name ILIKE :search OR user.last_name ILIKE :search OR user.email ILIKE :search)',
+        { search: `%${search}%` },
+      );
     }
 
     query
       .orderBy('user.createdAt', 'DESC')
-      .skip(paginationDto.skip)
-      .take(paginationDto.limit);
+      .skip(queryDto.skip)
+      .take(queryDto.limit);
 
     const [users, total] = await query.getManyAndCount();
 
     return createPaginatedResponse(
       users,
       total,
-      paginationDto.page!,
-      paginationDto.limit!,
+      queryDto.page!,
+      queryDto.limit!,
     );
   }
 

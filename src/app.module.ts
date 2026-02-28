@@ -22,6 +22,8 @@ import { SystemConfigModule } from './config/config.module';
 import { WalletModule } from './wallet/wallet.module';
 import { HealthModule } from './health/health.module';
 import { UploadModule } from './upload/upload.module';
+import { FaqsModule } from './faqs/faqs.module';
+import { FAQ } from './faqs/entities/faq.entity';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -52,6 +54,7 @@ import { UploadModule } from './upload/upload.module';
           Wallet,
           Transaction,
           RefreshToken,
+          FAQ,
         ],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',
@@ -69,6 +72,7 @@ import { UploadModule } from './upload/upload.module';
     WalletModule,
     HealthModule,
     UploadModule,
+    FaqsModule,
   ],
   controllers: [],
   providers: [

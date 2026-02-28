@@ -29,7 +29,7 @@ async function bootstrap() {
     'http://localhost:3000',
     'http://localhost:4100',
     'http://localhost:8000',
-  ];
+  ].filter(Boolean) as string[];
 
   app.enableCors({
     origin: (origin, callback) => {
