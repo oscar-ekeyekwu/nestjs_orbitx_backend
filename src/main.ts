@@ -25,6 +25,9 @@ async function bootstrap() {
     'exp://localhost:8081', // Expo dev
     'http://10.0.2.2:8081', // Android emulator
     'http://192.168.*.*:8081', // Local network (React Native)
+    'http://localhost:3000',
+    'http://localhost:4100',
+    'http://localhost:8000',
   ];
 
   app.enableCors({
