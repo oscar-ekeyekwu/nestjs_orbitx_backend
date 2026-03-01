@@ -13,10 +13,12 @@ import {
   TransactionStatus,
   PaymentMethod,
 } from './entities/transaction.entity';
+import { VirtualAccount } from './entities/virtual-account.entity';
 import { AddFundsDto } from './dto/add-funds.dto';
 import { WithdrawFundsDto } from './dto/withdraw-funds.dto';
 import { SystemConfigService } from '../config/config.service';
 import { ConfigKey } from '../config/enums/config-keys.enum';
+import { PaymentService } from '../payment/payment.service';
 
 @Injectable()
 export class WalletService {
@@ -25,8 +27,11 @@ export class WalletService {
     private walletRepository: Repository<Wallet>,
     @InjectRepository(Transaction)
     private transactionRepository: Repository<Transaction>,
+    @InjectRepository(VirtualAccount)
+    private virtualAccountRepository: Repository<VirtualAccount>,
     private dataSource: DataSource,
     private configService: SystemConfigService,
+    private paymentService: PaymentService,
   ) {}
 
   /**
@@ -341,6 +346,128 @@ export class WalletService {
   }
 
   /**
+   * Deduct security deposit when driver accepts an order
+   */
+  async deductSecurityDeposit(
+    userId: string,
+    orderId: string,
+  ): Promise<Transaction> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const wallet = await queryRunner.manager.findOne(Wallet, {
+        where: { userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!wallet) {
+        throw new NotFoundException('Wallet not found');
+      }
+
+      if (wallet.isLocked) {
+        throw new ForbiddenException('Wallet is locked');
+      }
+
+      const minBalance = await this.configService.getNumber(
+        ConfigKey.DRIVER_MIN_BALANCE,
+        0,
+      );
+
+      if (Number(wallet.balance) < minBalance) {
+        throw new BadRequestException(
+          `Insufficient balance. Minimum balance of ₦${minBalance} required`,
+        );
+      }
+
+      const newBalance = Number(wallet.balance) - minBalance;
+      wallet.balance = newBalance;
+
+      await queryRunner.manager.save(wallet);
+
+      const transaction = queryRunner.manager.create(Transaction, {
+        walletId: wallet.id,
+        orderId,
+        type: TransactionType.DEBIT,
+        amount: minBalance,
+        balanceAfter: newBalance,
+        status: TransactionStatus.COMPLETED,
+        paymentMethod: PaymentMethod.WALLET,
+        description: `Security deposit for order ${orderId}`,
+        metadata: { type: 'security_deposit', orderId },
+      });
+
+      const savedTransaction = await queryRunner.manager.save(transaction);
+
+      await queryRunner.commitTransaction();
+
+      return savedTransaction;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Refund security deposit when order is delivered or cancelled
+   */
+  async refundSecurityDeposit(
+    userId: string,
+    orderId: string,
+  ): Promise<Transaction> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const wallet = await queryRunner.manager.findOne(Wallet, {
+        where: { userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!wallet) {
+        throw new NotFoundException('Wallet not found');
+      }
+
+      const minBalance = await this.configService.getNumber(
+        ConfigKey.DRIVER_MIN_BALANCE,
+        0,
+      );
+
+      const newBalance = Number(wallet.balance) + minBalance;
+      wallet.balance = newBalance;
+
+      await queryRunner.manager.save(wallet);
+
+      const transaction = queryRunner.manager.create(Transaction, {
+        walletId: wallet.id,
+        orderId,
+        type: TransactionType.CREDIT,
+        amount: minBalance,
+        balanceAfter: newBalance,
+        status: TransactionStatus.COMPLETED,
+        paymentMethod: PaymentMethod.WALLET,
+        description: `Security deposit refund for order ${orderId}`,
+        metadata: { type: 'security_deposit_refund', orderId },
+      });
+
+      const savedTransaction = await queryRunner.manager.save(transaction);
+
+      await queryRunner.commitTransaction();
+
+      return savedTransaction;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
    * Get wallet statistics
    */
   async getWalletStats(userId: string): Promise<{
@@ -370,5 +497,39 @@ export class WalletService {
       canTakeOrders: Number(wallet.balance) >= minBalance,
       minBalanceRequired: minBalance,
     };
+  }
+
+  /**
+   * Get or create a virtual account for a driver (idempotent)
+   */
+  async getOrCreateVirtualAccount(
+    userId: string,
+    name: string,
+    email: string,
+  ): Promise<VirtualAccount> {
+    const existing = await this.virtualAccountRepository.findOne({
+      where: { userId },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const result = await this.paymentService.createVirtualAccount({
+      userId,
+      name,
+      email,
+    });
+
+    const virtualAccount = this.virtualAccountRepository.create({
+      userId,
+      accountNumber: result.accountNumber,
+      bankName: result.bankName,
+      accountName: result.accountName,
+      providerReference: result.providerReference,
+      provider: result.provider,
+    });
+
+    return this.virtualAccountRepository.save(virtualAccount);
   }
 }
