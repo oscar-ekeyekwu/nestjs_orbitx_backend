@@ -16,6 +16,7 @@ import { Notification } from './notifications/entities/notification.entity';
 import { SystemConfig } from './config/entities/system-config.entity';
 import { Wallet } from './wallet/entities/wallet.entity';
 import { Transaction } from './wallet/entities/transaction.entity';
+import { VirtualAccount } from './wallet/entities/virtual-account.entity';
 import { RefreshToken } from './auth/entities/refresh-token.entity';
 import { DatabaseModule } from './database/database.module';
 import { SystemConfigModule } from './config/config.module';
@@ -24,6 +25,7 @@ import { HealthModule } from './health/health.module';
 import { UploadModule } from './upload/upload.module';
 import { FaqsModule } from './faqs/faqs.module';
 import { FAQ } from './faqs/entities/faq.entity';
+import { PaymentModule } from './payment/payment.module';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -53,6 +55,7 @@ import { FAQ } from './faqs/entities/faq.entity';
           SystemConfig,
           Wallet,
           Transaction,
+          VirtualAccount,
           RefreshToken,
           FAQ,
         ],
@@ -73,6 +76,7 @@ import { FAQ } from './faqs/entities/faq.entity';
     HealthModule,
     UploadModule,
     FaqsModule,
+    PaymentModule,
   ],
   controllers: [],
   providers: [

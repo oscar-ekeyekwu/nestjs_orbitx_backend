@@ -156,7 +156,12 @@ export class OrdersService {
     order.status = OrderStatus.ACCEPTED;
     order.acceptedAt = new Date();
 
-    return this.ordersRepository.save(order);
+    await this.ordersRepository.save(order);
+
+    // Deduct security deposit after order is saved
+    await this.walletService.deductSecurityDeposit(driverId, orderId);
+
+    return this.ordersRepository.findOne({ where: { id: orderId }, relations: ['customer', 'driver'] }) as Promise<Order>;
   }
 
   async updateStatus(
@@ -193,8 +198,9 @@ export class OrdersService {
       order.deliveredAt = new Date();
       order.finalPrice = order.estimatedPrice;
 
-      // Process payment to driver's wallet (cash payment by default)
       if (order.driverId) {
+        // Refund security deposit first, then credit earnings
+        await this.walletService.refundSecurityDeposit(order.driverId, order.id);
         await this.walletService.processOrderPayment(
           order.driverId,
           order.id,
@@ -238,6 +244,11 @@ export class OrdersService {
 
     if (order.status === OrderStatus.DELIVERED) {
       throw new BadRequestException('Cannot cancel delivered order');
+    }
+
+    // Refund security deposit if order was already accepted
+    if (order.driverId && order.status !== OrderStatus.PENDING) {
+      await this.walletService.refundSecurityDeposit(order.driverId, orderId);
     }
 
     order.status = OrderStatus.CANCELLED;

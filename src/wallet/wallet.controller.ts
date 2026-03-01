@@ -93,6 +93,17 @@ export class WalletController {
     return this.walletService.getTransactionById(id, user.id);
   }
 
+  @Get('virtual-account')
+  @Roles(UserRole.DRIVER)
+  @ApiOperation({ summary: 'Get or create virtual bank account for funding wallet' })
+  async getVirtualAccount(@CurrentUser() user: User) {
+    return this.walletService.getOrCreateVirtualAccount(
+      user.id,
+      user.name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Driver',
+      user.email,
+    );
+  }
+
   @Post('lock/:userId')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Lock user wallet (Admin only)' })
