@@ -27,7 +27,9 @@ export class PushNotificationService {
 
       if (serviceAccount) {
         try {
-          const parsedAccount = JSON.parse(serviceAccount);
+          const parsedAccount = JSON.parse(
+            serviceAccount,
+          ) as admin.ServiceAccount;
 
           admin.initializeApp({
             credential: admin.credential.cert(parsedAccount),

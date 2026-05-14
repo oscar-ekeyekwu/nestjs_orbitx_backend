@@ -7,18 +7,27 @@ import { join } from 'path';
 export class UploadService {
   constructor(private configService: ConfigService) {}
 
-  async getFileUrl(filename: string, type: 'avatar' | 'document' | 'general' = 'general'): Promise<string> {
-    const baseUrl = this.configService.get('APP_URL') || 'http://localhost:3000';
-    const folder = type === 'avatar' ? 'avatars' : type === 'document' ? 'documents' : '';
+  getFileUrl(
+    filename: string,
+    type: 'avatar' | 'document' | 'general' = 'general',
+  ): string {
+    const baseUrl =
+      this.configService.get<string>('APP_URL') ?? 'http://localhost:3000';
+    const folder =
+      type === 'avatar' ? 'avatars' : type === 'document' ? 'documents' : '';
     return `${baseUrl}/uploads/${folder ? folder + '/' : ''}${filename}`;
   }
 
-  async deleteFile(filename: string, type: 'avatar' | 'document' | 'general' = 'general'): Promise<void> {
+  async deleteFile(
+    filename: string,
+    type: 'avatar' | 'document' | 'general' = 'general',
+  ): Promise<void> {
     try {
-      const folder = type === 'avatar' ? 'avatars' : type === 'document' ? 'documents' : '';
+      const folder =
+        type === 'avatar' ? 'avatars' : type === 'document' ? 'documents' : '';
       const filePath = join(process.cwd(), 'uploads', folder, filename);
       await unlink(filePath);
-    } catch (error) {
+    } catch {
       throw new NotFoundException('File not found');
     }
   }
@@ -29,11 +38,14 @@ export class UploadService {
   }
 
   validateFileType(file: Express.Multer.File, allowedTypes: string[]): boolean {
-    return allowedTypes.some(type => file.mimetype.includes(type));
+    return allowedTypes.some((type) => file.mimetype.includes(type));
   }
 
-  async processUpload(file: Express.Multer.File, type: 'avatar' | 'document' | 'general' = 'general') {
-    const fileUrl = await this.getFileUrl(file.filename, type);
+  processUpload(
+    file: Express.Multer.File,
+    type: 'avatar' | 'document' | 'general' = 'general',
+  ) {
+    const fileUrl = this.getFileUrl(file.filename, type);
     return {
       filename: file.filename,
       originalName: file.originalname,

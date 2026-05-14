@@ -44,12 +44,12 @@ export class EmailService {
     html: string | undefined,
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
-      const info = await this.transporter.sendMail({
+      const info = (await this.transporter.sendMail({
         from: this.fromEmail,
         to,
         subject,
         html,
-      });
+      })) as { messageId?: string };
 
       return { success: true, messageId: info.messageId };
     } catch (err: unknown) {

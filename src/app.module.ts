@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule as NestConfigModule, ConfigService } from '@nestjs/config';
+import {
+  ConfigModule as NestConfigModule,
+  ConfigService,
+} from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
@@ -32,12 +35,24 @@ import { PaymentModule } from './payment/payment.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000, // 1 minute
-        limit: 100, // 100 requests per minute
+    ThrottlerModule.forRootAsync({
+      imports: [NestConfigModule],
+      // Allow tests + dev tools to bypass the rate limiter by setting
+      //   THROTTLE_DISABLED=true
+      // in the environment. In production this var is unset (or "false"),
+      // so the configured limit applies. Per-route @Throttle() decorators
+      // still apply on top of this when not disabled.
+      useFactory: (config: ConfigService) => {
+        const disabled = config.get<string>('THROTTLE_DISABLED') === 'true';
+        return [
+          {
+            ttl: 60000, // 1 minute
+            limit: disabled ? 1_000_000 : 100,
+          },
+        ];
       },
-    ]),
+      inject: [ConfigService],
+    }),
     TypeOrmModule.forRootAsync({
       imports: [NestConfigModule],
       useFactory: (configService: ConfigService) => ({

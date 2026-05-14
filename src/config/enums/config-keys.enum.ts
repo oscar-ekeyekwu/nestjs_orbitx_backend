@@ -20,11 +20,16 @@ export enum ConfigKey {
 
 export const DEFAULT_CONFIG_VALUES: Record<
   ConfigKey,
-  { value: string; description: string; dataType: 'string' | 'number' | 'boolean' | 'json' }
+  {
+    value: string;
+    description: string;
+    dataType: 'string' | 'number' | 'boolean' | 'json';
+  }
 > = {
   [ConfigKey.DRIVER_MIN_BALANCE]: {
     value: '5000',
-    description: 'Minimum balance (in Naira) required for drivers to accept orders',
+    description:
+      'Minimum balance (in Naira) required for drivers to accept orders',
     dataType: 'number',
   },
   [ConfigKey.DRIVER_COMMISSION_PERCENTAGE]: {
@@ -69,7 +74,8 @@ export const DEFAULT_CONFIG_VALUES: Record<
   },
   [ConfigKey.ORDER_AUTO_CANCEL_MINUTES]: {
     value: '30',
-    description: 'Minutes before an unaccepted order is automatically cancelled',
+    description:
+      'Minutes before an unaccepted order is automatically cancelled',
     dataType: 'number',
   },
 };

@@ -2,7 +2,10 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan } from 'typeorm';
-import { VerificationCode, VerificationType } from './entities/verification-code.entity';
+import {
+  VerificationCode,
+  VerificationType,
+} from './entities/verification-code.entity';
 import { IEmailDriver } from './interfaces/email-driver.interface';
 import { SendGridDriver } from './drivers/sendgrid.driver';
 import { SMTPDriver } from './drivers/smtp.driver';
@@ -33,18 +36,16 @@ export class EmailService {
   }
 
   private initializeDriver() {
-    const driver = this.configService.get<string>('EMAIL_DRIVER', 'smtp');
+    const driver = this.configService
+      .get<string>('EMAIL_DRIVER', 'smtp')
+      .toLowerCase();
 
-    switch (driver.toLowerCase()) {
-      case EmailDriver.SENDGRID:
-        this.emailDriver = this.sendGridDriver;
-        this.logger.log('Using SendGrid email driver');
-        break;
-      case EmailDriver.SMTP:
-      default:
-        this.emailDriver = this.smtpDriver;
-        this.logger.log('Using SMTP email driver');
-        break;
+    if (driver === (EmailDriver.SENDGRID as string)) {
+      this.emailDriver = this.sendGridDriver;
+      this.logger.log('Using SendGrid email driver');
+    } else {
+      this.emailDriver = this.smtpDriver;
+      this.logger.log('Using SMTP email driver');
     }
   }
 
@@ -78,7 +79,10 @@ export class EmailService {
 
     // Generate new code
     const code = this.generateCode();
-    const expiryMinutes = this.configService.get<number>('VERIFICATION_CODE_EXPIRY_MINUTES', 10);
+    const expiryMinutes = this.configService.get<number>(
+      'VERIFICATION_CODE_EXPIRY_MINUTES',
+      10,
+    );
     const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
 
     // Save verification code to database
@@ -146,7 +150,10 @@ export class EmailService {
     }
 
     // Check max attempts
-    const maxAttempts = this.configService.get<number>('MAX_VERIFICATION_ATTEMPTS', 5);
+    const maxAttempts = this.configService.get<number>(
+      'MAX_VERIFICATION_ATTEMPTS',
+      5,
+    );
     if (verificationCode.attempts >= maxAttempts) {
       throw new BadRequestException({
         message: 'Maximum verification attempts exceeded. Request a new code.',

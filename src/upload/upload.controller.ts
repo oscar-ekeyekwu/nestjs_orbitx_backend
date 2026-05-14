@@ -47,7 +47,7 @@ export class UploadController {
       },
     },
   })
-  async uploadAvatar(@UploadedFile() file: Express.Multer.File) {
+  uploadAvatar(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException({
         message: 'No file provided',
@@ -73,7 +73,7 @@ export class UploadController {
       },
     },
   })
-  async uploadDocument(@UploadedFile() file: Express.Multer.File) {
+  uploadDocument(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException({
         message: 'No file provided',
@@ -99,7 +99,7 @@ export class UploadController {
       },
     },
   })
-  async uploadImage(@UploadedFile() file: Express.Multer.File) {
+  uploadImage(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException({
         message: 'No file provided',

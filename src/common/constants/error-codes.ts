@@ -84,7 +84,7 @@ export const getErrorCodeByMessage = (message: string): ErrorCode | null => {
   // Map common error messages to error codes
   const errorMessageMap: Record<string, ErrorCode> = {
     'Invalid credentials': ErrorCodes.AUTH_001,
-    'Unauthorized': ErrorCodes.AUTH_002,
+    Unauthorized: ErrorCodes.AUTH_002,
     'User not found': ErrorCodes.AUTH_007,
     'Email already exists': ErrorCodes.AUTH_009,
     'Wallet not found': ErrorCodes.WALLET_001,

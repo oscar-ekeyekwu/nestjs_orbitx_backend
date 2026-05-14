@@ -5,8 +5,27 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
-import { getErrorCodeByMessage, ErrorCodes, ErrorCode } from '../constants/error-codes';
+import type { Request, Response } from 'express';
+import {
+  getErrorCodeByMessage,
+  ErrorCodes,
+  ErrorCode,
+} from '../constants/error-codes';
+
+interface NestExceptionPayload {
+  message?: string | string[];
+  errors?: unknown[];
+}
+
+interface ErrorResponseBody {
+  success: false;
+  errorCode: ErrorCode;
+  message: string;
+  statusCode: number;
+  path: string;
+  timestamp: string;
+  errors?: unknown[];
+}
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -18,7 +37,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
     let errorCode: ErrorCode = ErrorCodes.SYS_001;
-    let errors: any[] | undefined;
+    let errors: unknown[] | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -26,9 +45,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
       if (typeof res === 'string') {
         message = res;
-      } else if (typeof res === 'object') {
-        message = (res as any).message || message;
-        errors = (res as any).errors;
+      } else if (typeof res === 'object' && res !== null) {
+        const payload = res as NestExceptionPayload;
+        const payloadMessage = payload.message;
+        message = Array.isArray(payloadMessage)
+          ? payloadMessage.join('; ')
+          : (payloadMessage ?? message);
+        errors = payload.errors;
       }
 
       // Get error code based on message
@@ -71,7 +94,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       stack: exception instanceof Error ? exception.stack : undefined,
     });
 
-    const errorResponse: any = {
+    const errorResponse: ErrorResponseBody = {
       success: false,
       errorCode,
       message,

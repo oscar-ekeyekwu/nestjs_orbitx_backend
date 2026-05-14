@@ -20,15 +20,33 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
 
-  // Enable CORS for mobile apps and web
+  // Enable CORS for mobile apps and web.
+  //
+  // Origins are sourced from env where possible — hardcoded localhost ports
+  // only stay in the list as developer-convenience defaults. To add or
+  // change an origin without touching code, set CORS_ALLOWED_ORIGINS as a
+  // comma-separated list in the backend .env, e.g.:
+  //   CORS_ALLOWED_ORIGINS=https://admin.orbitx.app,https://app.orbitx.app
+  //
+  // Mobile apps (React Native / Expo) ship requests with no Origin header,
+  // so they're allowed unconditionally below — this list is for browsers.
+  const envOrigins =
+    configService
+      .get<string>('CORS_ALLOWED_ORIGINS')
+      ?.split(',')
+      .map((o) => o.trim())
+      .filter(Boolean) ?? [];
+
   const allowedOrigins = [
-    configService.get('FRONTEND_URL') || 'http://localhost:8081',
-    configService.get('ADMIN_FRONTEND_URL'),
+    configService.get<string>('FRONTEND_URL') || 'http://localhost:8081',
+    configService.get<string>('ADMIN_FRONTEND_URL'),
+    ...envOrigins,
+    // Local dev convenience defaults — safe because they cannot reach prod.
     'http://localhost:8081', // React Native dev
     'exp://localhost:8081', // Expo dev
     'http://10.0.2.2:8081', // Android emulator
-    'http://192.168.*.*:8081', // Local network (React Native)
-    'http://localhost:3000',
+    'http://192.168.*.*:8081', // Local LAN (physical device on dev network)
+    'http://localhost:3000', // Admin Vite dev server
     'http://localhost:4100',
     'http://localhost:8000',
   ].filter(Boolean) as string[];
@@ -119,4 +137,4 @@ async function bootstrap() {
   );
 }
 
-bootstrap();
+void bootstrap();

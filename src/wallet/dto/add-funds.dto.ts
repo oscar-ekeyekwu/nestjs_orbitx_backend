@@ -1,4 +1,10 @@
-import { IsNumber, IsPositive, IsEnum, IsOptional, IsString } from 'class-validator';
+import {
+  IsNumber,
+  IsPositive,
+  IsEnum,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { PaymentMethod } from '../entities/transaction.entity';
 

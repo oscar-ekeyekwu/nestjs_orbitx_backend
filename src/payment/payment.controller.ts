@@ -9,7 +9,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { PaymentService } from './payment.service';
 import { WalletService } from '../wallet/wallet.service';
 import { AddFundsDto } from '../wallet/dto/add-funds.dto';
@@ -29,10 +29,10 @@ export class PaymentController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Paystack webhook handler (no auth required)' })
   async paystackWebhook(
-    @Req() req: Request,
+    @Req() req: Request & { rawBody?: Buffer },
     @Headers('x-paystack-signature') signature: string,
   ) {
-    const rawBody: Buffer = (req as any).rawBody;
+    const rawBody = req.rawBody;
 
     if (!rawBody || !signature) {
       throw new UnauthorizedException('Missing signature');
@@ -60,9 +60,7 @@ export class PaymentController {
             description: 'Virtual account funding',
           };
           await this.walletService.addFunds(userId, addFundsDto);
-          this.logger.log(
-            `Funded wallet for user ${userId}: ₦${event.amount}`,
-          );
+          this.logger.log(`Funded wallet for user ${userId}: ₦${event.amount}`);
         } catch (error) {
           this.logger.error(
             `Failed to fund wallet for user ${userId}: ${error}`,

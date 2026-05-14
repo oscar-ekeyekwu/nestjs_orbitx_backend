@@ -27,19 +27,23 @@ export class AuthService {
     private refreshTokenRepository: Repository<RefreshToken>,
   ) {}
 
-  async register(registerDto: RegisterDto) {
+  async register(
+    registerDto: RegisterDto,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
     const user = await this.usersService.create(registerDto);
-    return this.generateAuthResponse(user);
+    return this.generateAuthResponse(user, undefined, ipAddress, userAgent);
   }
 
-  async login(loginDto: LoginDto) {
+  async login(loginDto: LoginDto, ipAddress?: string, userAgent?: string) {
     const user = await this.validateUser(loginDto.email, loginDto.password);
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    return this.generateAuthResponse(user);
+    return this.generateAuthResponse(user, undefined, ipAddress, userAgent);
   }
 
   async googleAuth(
@@ -92,7 +96,7 @@ export class AuthService {
     const userWithoutPassword = instanceToPlain(user) as Omit<User, 'password'>;
 
     const accessToken = this.jwtService.sign(payload);
-    const decoded = this.jwtService.decode(accessToken) as { exp?: number };
+    const decoded = this.decodeExp(accessToken);
 
     // Generate refresh token
     const refreshToken = await this.createRefreshToken(
@@ -110,6 +114,20 @@ export class AuthService {
         : null,
       user: userWithoutPassword,
     };
+  }
+
+  /**
+   * Decode a signed JWT and pull out the `exp` claim if present.
+   * Wrapped in a helper because @nestjs/jwt typings widen the return to
+   * `string | object | null`, which trips no-unsafe-* lint rules at call sites.
+   */
+  private decodeExp(token: string): { exp?: number } | null {
+    const decoded: unknown = this.jwtService.decode(token);
+    if (decoded && typeof decoded === 'object' && 'exp' in decoded) {
+      const exp = (decoded as { exp?: unknown }).exp;
+      return typeof exp === 'number' ? { exp } : null;
+    }
+    return null;
   }
 
   /**

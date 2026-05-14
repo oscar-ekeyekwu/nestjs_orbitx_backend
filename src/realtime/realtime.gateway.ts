@@ -80,9 +80,9 @@ export class RealtimeGateway
         `✅ Client connected: ${client.id}, User: ${client.userId}, Role: ${client.userRole}`,
       );
 
-      // Join a private room for this user
-      client.join(`user:${client.userId}`);
-      await Promise.resolve(); // placeholder to satisfy eslint
+      // Join a private room for this user.
+      // socket.io v4 returns Promise<void>; await so connection auth completes deterministically.
+      await client.join(`user:${client.userId}`);
     } catch (error) {
       console.error('❌ Connection auth error:', error);
       client.emit('auth_error', { message: 'Invalid or expired token' });
@@ -113,7 +113,7 @@ export class RealtimeGateway
       throw new WsException('orderId is required');
     }
 
-    client.join(`order:${data.orderId}`);
+    void client.join(`order:${data.orderId}`);
     return { success: true, message: `Joined order ${data.orderId}` };
   }
 
@@ -127,7 +127,7 @@ export class RealtimeGateway
       throw new WsException('orderId is required');
     }
 
-    client.leave(`order:${data.orderId}`);
+    void client.leave(`order:${data.orderId}`);
     return { success: true, message: `Left order ${data.orderId}` };
   }
 

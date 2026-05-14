@@ -3,114 +3,102 @@ import { extname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { BadRequestException } from '@nestjs/common';
 import { ErrorCodes } from '../../common/constants/error-codes';
+import type { Request } from 'express';
+
+type DestinationCallback = (error: Error | null, destination: string) => void;
+type FilenameCallback = (error: Error | null, filename: string) => void;
+type FileFilterCallback = (error: Error | null, acceptFile: boolean) => void;
+
+const FILE_SIZE_5MB = 5 * 1024 * 1024;
+const FILE_SIZE_2MB = 2 * 1024 * 1024;
+const FILE_SIZE_10MB = 10 * 1024 * 1024;
+
+function randomToken(): string {
+  return Array(32)
+    .fill(null)
+    .map(() => Math.round(Math.random() * 16).toString(16))
+    .join('');
+}
+
+function makeImageFileFilter(mimePattern: RegExp, message: string) {
+  return (_req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
+    if (mimePattern.test(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new BadRequestException({
+          message,
+          errorCode: ErrorCodes.FILE_002,
+        }),
+        false,
+      );
+    }
+  };
+}
+
+function makeDestination(uploadPath: string) {
+  return (
+    _req: Request,
+    _file: Express.Multer.File,
+    cb: DestinationCallback,
+  ) => {
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  };
+}
+
+function makeFilename(prefix = '') {
+  return (_req: Request, file: Express.Multer.File, cb: FilenameCallback) => {
+    cb(null, `${prefix}${randomToken()}${extname(file.originalname)}`);
+  };
+}
 
 export const multerConfig = {
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
+    fileSize: FILE_SIZE_5MB,
   },
 };
 
 export const multerOptions = {
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
+    fileSize: FILE_SIZE_5MB,
   },
-  fileFilter: (req: any, file: any, cb: any) => {
-    if (file.mimetype.match(/\/(jpg|jpeg|png|gif|webp)$/)) {
-      cb(null, true);
-    } else {
-      cb(
-        new BadRequestException({
-          message: 'Invalid file type. Only image files are allowed.',
-          errorCode: ErrorCodes.FILE_002,
-        }),
-        false,
-      );
-    }
-  },
+  fileFilter: makeImageFileFilter(
+    /\/(jpg|jpeg|png|gif|webp)$/,
+    'Invalid file type. Only image files are allowed.',
+  ),
   storage: diskStorage({
-    destination: (req: any, file: any, cb: any) => {
-      const uploadPath = './uploads';
-      if (!existsSync(uploadPath)) {
-        mkdirSync(uploadPath, { recursive: true });
-      }
-      cb(null, uploadPath);
-    },
-    filename: (req: any, file: any, cb: any) => {
-      const randomName = Array(32)
-        .fill(null)
-        .map(() => Math.round(Math.random() * 16).toString(16))
-        .join('');
-      cb(null, `${randomName}${extname(file.originalname)}`);
-    },
+    destination: makeDestination('./uploads'),
+    filename: makeFilename(),
   }),
 };
 
 export const avatarUploadOptions = {
   limits: {
-    fileSize: 2 * 1024 * 1024, // 2MB for avatars
+    fileSize: FILE_SIZE_2MB,
   },
-  fileFilter: (req: any, file: any, cb: any) => {
-    if (file.mimetype.match(/\/(jpg|jpeg|png|webp)$/)) {
-      cb(null, true);
-    } else {
-      cb(
-        new BadRequestException({
-          message: 'Invalid file type. Only JPG, PNG, and WebP are allowed for avatars.',
-          errorCode: ErrorCodes.FILE_002,
-        }),
-        false,
-      );
-    }
-  },
+  fileFilter: makeImageFileFilter(
+    /\/(jpg|jpeg|png|webp)$/,
+    'Invalid file type. Only JPG, PNG, and WebP are allowed for avatars.',
+  ),
   storage: diskStorage({
-    destination: (req: any, file: any, cb: any) => {
-      const uploadPath = './uploads/avatars';
-      if (!existsSync(uploadPath)) {
-        mkdirSync(uploadPath, { recursive: true });
-      }
-      cb(null, uploadPath);
-    },
-    filename: (req: any, file: any, cb: any) => {
-      const randomName = Array(32)
-        .fill(null)
-        .map(() => Math.round(Math.random() * 16).toString(16))
-        .join('');
-      cb(null, `avatar-${randomName}${extname(file.originalname)}`);
-    },
+    destination: makeDestination('./uploads/avatars'),
+    filename: makeFilename('avatar-'),
   }),
 };
 
 export const documentUploadOptions = {
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB for documents
+    fileSize: FILE_SIZE_10MB,
   },
-  fileFilter: (req: any, file: any, cb: any) => {
-    if (file.mimetype.match(/\/(jpg|jpeg|png|pdf)$/)) {
-      cb(null, true);
-    } else {
-      cb(
-        new BadRequestException({
-          message: 'Invalid file type. Only JPG, PNG, and PDF are allowed for documents.',
-          errorCode: ErrorCodes.FILE_002,
-        }),
-        false,
-      );
-    }
-  },
+  fileFilter: makeImageFileFilter(
+    /\/(jpg|jpeg|png|pdf)$/,
+    'Invalid file type. Only JPG, PNG, and PDF are allowed for documents.',
+  ),
   storage: diskStorage({
-    destination: (req: any, file: any, cb: any) => {
-      const uploadPath = './uploads/documents';
-      if (!existsSync(uploadPath)) {
-        mkdirSync(uploadPath, { recursive: true });
-      }
-      cb(null, uploadPath);
-    },
-    filename: (req: any, file: any, cb: any) => {
-      const randomName = Array(32)
-        .fill(null)
-        .map(() => Math.round(Math.random() * 16).toString(16))
-        .join('');
-      cb(null, `doc-${randomName}${extname(file.originalname)}`);
-    },
+    destination: makeDestination('./uploads/documents'),
+    filename: makeFilename('doc-'),
   }),
 };

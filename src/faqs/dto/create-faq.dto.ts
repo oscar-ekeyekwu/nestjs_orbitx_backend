@@ -1,4 +1,12 @@
-import { IsString, IsBoolean, IsOptional, IsInt, Min, MinLength, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsBoolean,
+  IsOptional,
+  IsInt,
+  Min,
+  MinLength,
+  MaxLength,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateFaqDto {
@@ -8,13 +16,18 @@ export class CreateFaqDto {
   @MaxLength(200)
   question: string;
 
-  @ApiProperty({ example: 'You can track your order from the Order History screen.' })
+  @ApiProperty({
+    example: 'You can track your order from the Order History screen.',
+  })
   @IsString()
   @MinLength(10)
   @MaxLength(1000)
   answer: string;
 
-  @ApiProperty({ example: 'Orders', enum: ['General', 'Orders', 'Payments', 'Drivers', 'Account'] })
+  @ApiProperty({
+    example: 'Orders',
+    enum: ['General', 'Orders', 'Payments', 'Drivers', 'Account'],
+  })
   @IsString()
   category: string;
 

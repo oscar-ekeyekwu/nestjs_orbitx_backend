@@ -8,6 +8,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { numericTransformer } from '../../common/utils/decimal-transformer';
 
 export enum OrderStatus {
   PENDING = 'pending',
@@ -94,11 +95,22 @@ export class Order {
   @Column({ type: 'text', nullable: true })
   deliveryNotes: string;
 
-  // Pricing
-  @Column('decimal', { precision: 10, scale: 2 })
+  // Pricing — numericTransformer normalizes pg's string return to a real
+  // JS number so arithmetic and JSON serialization both behave correctly.
+  // Float drift is still possible; full Decimal correctness is a known gap.
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    transformer: numericTransformer,
+  })
   estimatedPrice: number;
 
-  @Column('decimal', { precision: 10, scale: 2, nullable: true })
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    nullable: true,
+    transformer: numericTransformer,
+  })
   finalPrice: number;
 
   // Timestamps

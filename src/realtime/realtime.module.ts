@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { RealtimeGateway } from './realtime.gateway';
@@ -9,12 +9,14 @@ import { DriversModule } from '../drivers/drivers.module';
   imports: [
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
       }),
       inject: [ConfigService],
     }),
-    OrdersModule,
+    // forwardRef because OrdersService now depends on RealtimeGateway
+    // for emitting order lifecycle events.
+    forwardRef(() => OrdersModule),
     DriversModule,
   ],
   providers: [RealtimeGateway],
