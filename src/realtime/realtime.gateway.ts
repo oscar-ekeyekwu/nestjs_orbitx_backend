@@ -9,7 +9,7 @@ import {
   WsException,
 } from '@nestjs/websockets';
 
-import { UseGuards } from '@nestjs/common';
+import { Inject, UseGuards, forwardRef } from '@nestjs/common';
 import { Server } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
@@ -37,6 +37,9 @@ export class RealtimeGateway
 
   constructor(
     private readonly jwtService: JwtService,
+    // OrdersService is in a forwardRef'd module — the @Inject + forwardRef
+    // pair is required for Nest to wire the circular dep at runtime.
+    @Inject(forwardRef(() => OrdersService))
     private readonly ordersService: OrdersService,
     private readonly driversService: DriversService,
   ) {}
