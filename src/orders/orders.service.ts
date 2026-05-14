@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -19,6 +21,7 @@ import {
   createPaginatedResponse,
 } from '../common/dto/pagination.dto';
 import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 @Injectable()
 export class OrdersService {
@@ -27,7 +30,22 @@ export class OrdersService {
     private ordersRepository: Repository<Order>,
     private walletService: WalletService,
     private configService: SystemConfigService,
+    // forwardRef because RealtimeGateway (in RealtimeModule) also depends on OrdersService.
+    @Inject(forwardRef(() => RealtimeGateway))
+    private realtimeGateway: RealtimeGateway,
   ) {}
+
+  /**
+   * Realtime emit failures must never roll back a successful DB write.
+   * Wrap every gateway call so transport errors are logged and swallowed.
+   */
+  private safeEmit(action: () => void, label: string): void {
+    try {
+      action();
+    } catch (error) {
+      console.error(`Realtime emit failed (${label}):`, error);
+    }
+  }
 
   async create(
     createOrderDto: CreateOrderDto,
@@ -48,7 +66,15 @@ export class OrdersService {
       status: OrderStatus.PENDING,
     });
 
-    return this.ordersRepository.save(order);
+    const savedOrder = await this.ordersRepository.save(order);
+
+    // Broadcast to drivers so available-orders lists update without polling.
+    this.safeEmit(
+      () => this.realtimeGateway.emitNewOrderToDrivers(savedOrder),
+      'new_order_available',
+    );
+
+    return savedOrder;
   }
 
   async findAll(
@@ -161,7 +187,37 @@ export class OrdersService {
     // Deduct security deposit after order is saved
     await this.walletService.deductSecurityDeposit(driverId, orderId);
 
-    return this.ordersRepository.findOne({ where: { id: orderId }, relations: ['customer', 'driver'] }) as Promise<Order>;
+    const acceptedOrder = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      relations: ['customer', 'driver'],
+    });
+
+    if (acceptedOrder) {
+      // Notify the customer directly that their order was accepted, including driver info.
+      this.safeEmit(
+        () =>
+          this.realtimeGateway.emitOrderAccepted(
+            orderId,
+            acceptedOrder.customerId,
+            acceptedOrder.driver,
+          ),
+        'order_accepted',
+      );
+
+      // Also broadcast the status change into the order's room so any
+      // subscriber (customer tracking, dashboards) sees the transition.
+      this.safeEmit(
+        () =>
+          this.realtimeGateway.emitOrderStatusUpdate(
+            orderId,
+            acceptedOrder.status,
+            acceptedOrder,
+          ),
+        'order_status_updated:accepted',
+      );
+    }
+
+    return acceptedOrder as Order;
   }
 
   async updateStatus(
@@ -200,7 +256,10 @@ export class OrdersService {
 
       if (order.driverId) {
         // Refund security deposit first, then credit earnings
-        await this.walletService.refundSecurityDeposit(order.driverId, order.id);
+        await this.walletService.refundSecurityDeposit(
+          order.driverId,
+          order.id,
+        );
         await this.walletService.processOrderPayment(
           order.driverId,
           order.id,
@@ -210,7 +269,20 @@ export class OrdersService {
       }
     }
 
-    return this.ordersRepository.save(order);
+    const savedOrder = await this.ordersRepository.save(order);
+
+    // Broadcast status change to anyone watching this order (customer tracking screen, etc.)
+    this.safeEmit(
+      () =>
+        this.realtimeGateway.emitOrderStatusUpdate(
+          orderId,
+          savedOrder.status,
+          savedOrder,
+        ),
+      `order_status_updated:${savedOrder.status}`,
+    );
+
+    return savedOrder;
   }
 
   async updateDriverLocation(
@@ -252,7 +324,19 @@ export class OrdersService {
     }
 
     order.status = OrderStatus.CANCELLED;
-    return this.ordersRepository.save(order);
+    const savedOrder = await this.ordersRepository.save(order);
+
+    this.safeEmit(
+      () =>
+        this.realtimeGateway.emitOrderStatusUpdate(
+          orderId,
+          savedOrder.status,
+          savedOrder,
+        ),
+      'order_status_updated:cancelled',
+    );
+
+    return savedOrder;
   }
 
   private validateStatusTransition(

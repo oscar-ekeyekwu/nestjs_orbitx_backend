@@ -8,7 +8,12 @@ import {
   UseGuards,
   ParseIntPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { WalletService } from './wallet.service';
 import { AddFundsDto } from './dto/add-funds.dto';
 import { WithdrawFundsDto } from './dto/withdraw-funds.dto';
@@ -47,7 +52,9 @@ export class WalletController {
 
   @Get('can-take-order')
   @Roles(UserRole.DRIVER)
-  @ApiOperation({ summary: 'Check if driver can take orders (balance requirement)' })
+  @ApiOperation({
+    summary: 'Check if driver can take orders (balance requirement)',
+  })
   async canTakeOrder(@CurrentUser() user: User) {
     const canTake = await this.walletService.canDriverTakeOrder(user.id);
     return { canTakeOrder: canTake };
@@ -86,20 +93,21 @@ export class WalletController {
 
   @Get('transactions/:id')
   @ApiOperation({ summary: 'Get transaction by ID' })
-  async getTransaction(
-    @Param('id') id: string,
-    @CurrentUser() user: User,
-  ) {
+  async getTransaction(@Param('id') id: string, @CurrentUser() user: User) {
     return this.walletService.getTransactionById(id, user.id);
   }
 
   @Get('virtual-account')
   @Roles(UserRole.DRIVER)
-  @ApiOperation({ summary: 'Get or create virtual bank account for funding wallet' })
+  @ApiOperation({
+    summary: 'Get or create virtual bank account for funding wallet',
+  })
   async getVirtualAccount(@CurrentUser() user: User) {
     return this.walletService.getOrCreateVirtualAccount(
       user.id,
-      user.name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Driver',
+      user.name ||
+        `${user.first_name || ''} ${user.last_name || ''}`.trim() ||
+        'Driver',
       user.email,
     );
   }

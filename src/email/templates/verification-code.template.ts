@@ -1,4 +1,7 @@
-export const getVerificationEmailTemplate = (code: string, expiryMinutes: number = 10): string => {
+export const getVerificationEmailTemplate = (
+  code: string,
+  expiryMinutes: number = 10,
+): string => {
   return `
 <!DOCTYPE html>
 <html>
@@ -92,7 +95,10 @@ export const getVerificationEmailTemplate = (code: string, expiryMinutes: number
   `;
 };
 
-export const getPasswordResetTemplate = (code: string, expiryMinutes: number = 10): string => {
+export const getPasswordResetTemplate = (
+  code: string,
+  expiryMinutes: number = 10,
+): string => {
   return `
 <!DOCTYPE html>
 <html>

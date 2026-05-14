@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
-import { IEmailDriver, EmailOptions } from '../interfaces/email-driver.interface';
+import {
+  IEmailDriver,
+  EmailOptions,
+} from '../interfaces/email-driver.interface';
 
 @Injectable()
 export class SMTPDriver implements IEmailDriver {
@@ -20,7 +23,9 @@ export class SMTPDriver implements IEmailDriver {
     const pass = this.configService.get<string>('SMTP_PASS');
 
     if (!host || !user || !pass) {
-      this.logger.warn('SMTP configuration incomplete. Email functionality may not work.');
+      this.logger.warn(
+        'SMTP configuration incomplete. Email functionality may not work.',
+      );
       return;
     }
 
@@ -42,11 +47,15 @@ export class SMTPDriver implements IEmailDriver {
 
   async sendEmail(options: EmailOptions): Promise<void> {
     if (!this.transporter) {
-      throw new Error('SMTP transporter not initialized. Check your SMTP configuration.');
+      throw new Error(
+        'SMTP transporter not initialized. Check your SMTP configuration.',
+      );
     }
 
     try {
-      const from = options.from || this.configService.get<string>('EMAIL_FROM', 'noreply@orbitx.com');
+      const from =
+        options.from ||
+        this.configService.get<string>('EMAIL_FROM', 'noreply@orbitx.com');
 
       const mailOptions = {
         from,
@@ -57,10 +66,14 @@ export class SMTPDriver implements IEmailDriver {
         attachments: options.attachments,
       };
 
-      const info = await this.transporter.sendMail(mailOptions);
-      this.logger.log(`Email sent successfully: ${info.messageId}`);
-    } catch (error) {
-      this.logger.error(`Failed to send email via SMTP: ${error.message}`, error.stack);
+      const info = (await this.transporter.sendMail(mailOptions)) as {
+        messageId?: string;
+      };
+      this.logger.log(`Email sent successfully: ${info.messageId ?? ''}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to send email via SMTP: ${message}`, stack);
       throw error;
     }
   }
@@ -74,8 +87,9 @@ export class SMTPDriver implements IEmailDriver {
       await this.transporter.verify();
       this.logger.log('SMTP connection verified');
       return true;
-    } catch (error) {
-      this.logger.error(`SMTP connection failed: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`SMTP connection failed: ${message}`);
       return false;
     }
   }

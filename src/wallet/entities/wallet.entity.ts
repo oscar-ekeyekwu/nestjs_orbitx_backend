@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Transaction } from './transaction.entity';
+import { numericTransformer } from '../../common/utils/decimal-transformer';
 
 @Entity('wallets')
 export class Wallet {
@@ -23,16 +24,36 @@ export class Wallet {
   @JoinColumn({ name: 'userId' })
   user: User;
 
-  @Column('decimal', { precision: 12, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
   balance: number;
 
-  @Column('decimal', { precision: 12, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
   totalEarnings: number;
 
-  @Column('decimal', { precision: 12, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
   totalWithdrawals: number;
 
-  @Column('decimal', { precision: 12, scale: 2, default: 0 })
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
   pendingBalance: number;
 
   @Column({ default: false })

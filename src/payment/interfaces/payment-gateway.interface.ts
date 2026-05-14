@@ -6,11 +6,16 @@ export interface VirtualAccountResult {
   provider: string;
 }
 
+export interface WebhookEventMetadata {
+  userId?: string;
+  [key: string]: unknown;
+}
+
 export interface WebhookEvent {
   event: string;
   amount: number;
   reference: string;
-  metadata?: any;
+  metadata?: WebhookEventMetadata;
 }
 
 export interface IPaymentGateway {
@@ -23,5 +28,5 @@ export interface IPaymentGateway {
 
   verifyWebhookSignature(payload: Buffer, signature: string): boolean;
 
-  parseWebhookEvent(payload: any): WebhookEvent | null;
+  parseWebhookEvent(payload: unknown): WebhookEvent | null;
 }

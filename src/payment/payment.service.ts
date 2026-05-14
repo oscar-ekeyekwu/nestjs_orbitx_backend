@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import {
+import type {
   IPaymentGateway,
   VirtualAccountResult,
   WebhookEvent,
@@ -25,7 +25,7 @@ export class PaymentService {
     return this.gateway.verifyWebhookSignature(payload, signature);
   }
 
-  parseWebhookEvent(payload: any): WebhookEvent | null {
+  parseWebhookEvent(payload: unknown): WebhookEvent | null {
     return this.gateway.parseWebhookEvent(payload);
   }
 }

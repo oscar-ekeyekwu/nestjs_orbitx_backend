@@ -1,11 +1,39 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
-import {
+import type {
   IPaymentGateway,
   VirtualAccountResult,
   WebhookEvent,
+  WebhookEventMetadata,
 } from '../interfaces/payment-gateway.interface';
+
+interface PaystackEnvelope<T> {
+  status: boolean;
+  message?: string;
+  data?: T;
+}
+
+interface PaystackCustomer {
+  customer_code: string;
+}
+
+interface PaystackDedicatedAccount {
+  account_number: string;
+  account_name: string;
+  bank?: { name?: string };
+  bank_name?: string;
+  id?: number | string;
+}
+
+interface PaystackChargeSuccessPayload {
+  event: string;
+  data: {
+    amount: number;
+    reference: string;
+    metadata?: WebhookEventMetadata;
+  };
+}
 
 @Injectable()
 export class PaystackGateway implements IPaymentGateway {
@@ -14,7 +42,8 @@ export class PaystackGateway implements IPaymentGateway {
   private readonly baseUrl: string;
 
   constructor(private configService: ConfigService) {
-    this.secretKey = this.configService.get<string>('PAYSTACK_SECRET_KEY') || '';
+    this.secretKey =
+      this.configService.get<string>('PAYSTACK_SECRET_KEY') || '';
     this.baseUrl =
       this.configService.get<string>('PAYSTACK_BASE_URL') ||
       'https://api.paystack.co';
@@ -41,14 +70,15 @@ export class PaystackGateway implements IPaymentGateway {
       }),
     });
 
-    const customerData = await customerRes.json() as any;
+    const customerData =
+      (await customerRes.json()) as PaystackEnvelope<PaystackCustomer>;
     if (!customerData.status) {
       // Customer may already exist — try fetching
       this.logger.warn(`Paystack create customer: ${customerData.message}`);
     }
 
     const customerCode: string =
-      customerData.data?.customer_code ||
+      customerData.data?.customer_code ??
       (await this.fetchCustomerCode(params.email));
 
     // Step 2: Assign dedicated virtual account
@@ -69,11 +99,12 @@ export class PaystackGateway implements IPaymentGateway {
       }),
     });
 
-    const dvaData = await dvaRes.json() as any;
+    const dvaData =
+      (await dvaRes.json()) as PaystackEnvelope<PaystackDedicatedAccount>;
 
     if (!dvaData.status || !dvaData.data) {
       throw new Error(
-        `Failed to create virtual account: ${dvaData.message || 'Unknown error'}`,
+        `Failed to create virtual account: ${dvaData.message ?? 'Unknown error'}`,
       );
     }
 
@@ -81,9 +112,9 @@ export class PaystackGateway implements IPaymentGateway {
 
     return {
       accountNumber: account.account_number,
-      bankName: account.bank?.name || account.bank_name || 'Wema Bank',
+      bankName: account.bank?.name ?? account.bank_name ?? 'Wema Bank',
       accountName: account.account_name,
-      providerReference: account.id?.toString() || account.account_number,
+      providerReference: account.id?.toString() ?? account.account_number,
       provider: 'paystack',
     };
   }
@@ -95,7 +126,7 @@ export class PaystackGateway implements IPaymentGateway {
         headers: { Authorization: `Bearer ${this.secretKey}` },
       },
     );
-    const data = await res.json() as any;
+    const data = (await res.json()) as PaystackEnvelope<PaystackCustomer>;
     if (!data.status || !data.data?.customer_code) {
       throw new Error('Could not retrieve Paystack customer code');
     }
@@ -110,14 +141,15 @@ export class PaystackGateway implements IPaymentGateway {
     return hash === signature;
   }
 
-  parseWebhookEvent(payload: any): WebhookEvent | null {
-    if (payload.event === 'charge.success') {
-      const data = payload.data;
+  parseWebhookEvent(payload: unknown): WebhookEvent | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const p = payload as PaystackChargeSuccessPayload;
+    if (p.event === 'charge.success' && p.data) {
       return {
         event: 'payment',
-        amount: data.amount / 100, // Paystack amounts are in kobo
-        reference: data.reference,
-        metadata: data.metadata,
+        amount: p.data.amount / 100, // Paystack amounts are in kobo
+        reference: p.data.reference,
+        metadata: p.data.metadata,
       };
     }
     return null;

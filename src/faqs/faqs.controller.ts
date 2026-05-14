@@ -9,7 +9,12 @@ import {
   UseGuards,
   Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { FaqsService } from './faqs.service';
 import { CreateFaqDto } from './dto/create-faq.dto';
 import { UpdateFaqDto } from './dto/update-faq.dto';
@@ -28,7 +33,12 @@ export class FaqsController {
 
   @Get()
   @ApiOperation({ summary: 'List all active FAQs (public)' })
-  @ApiQuery({ name: 'all', required: false, type: Boolean, description: 'Include inactive FAQs (admin use)' })
+  @ApiQuery({
+    name: 'all',
+    required: false,
+    type: Boolean,
+    description: 'Include inactive FAQs (admin use)',
+  })
   findAll(@Query('all') all?: string) {
     // Only expose inactive FAQs when explicitly requested (admin frontend passes ?all)
     const onlyActive = all !== 'true';

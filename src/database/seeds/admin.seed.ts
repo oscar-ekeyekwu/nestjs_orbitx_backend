@@ -79,4 +79,4 @@ async function seedAdmin() {
 }
 
 // Run the seed
-seedAdmin();
+void seedAdmin();

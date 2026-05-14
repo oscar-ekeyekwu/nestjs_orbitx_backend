@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as sgMail from '@sendgrid/mail';
-import { IEmailDriver, EmailOptions } from '../interfaces/email-driver.interface';
+import type { MailDataRequired } from '@sendgrid/mail';
+import {
+  IEmailDriver,
+  EmailOptions,
+} from '../interfaces/email-driver.interface';
 
 @Injectable()
 export class SendGridDriver implements IEmailDriver {
@@ -19,23 +23,28 @@ export class SendGridDriver implements IEmailDriver {
 
   async sendEmail(options: EmailOptions): Promise<void> {
     try {
-      const from = options.from || this.configService.get<string>('EMAIL_FROM', 'noreply@orbitx.com');
+      const from =
+        options.from ??
+        this.configService.get<string>('EMAIL_FROM', 'noreply@orbitx.com');
 
-      const msg: any = {
+      const msg = {
         to: options.to,
         from,
         subject: options.subject,
-      };
-
-      // Add optional fields only if they exist
-      if (options.text) msg.text = options.text;
-      if (options.html) msg.html = options.html;
-      if (options.attachments) msg.attachments = options.attachments;
+        ...(options.text ? { text: options.text } : {}),
+        ...(options.html ? { html: options.html } : {}),
+        ...(options.attachments ? { attachments: options.attachments } : {}),
+      } as MailDataRequired;
 
       await sgMail.send(msg);
-      this.logger.log(`Email sent successfully to ${options.to}`);
-    } catch (error) {
-      this.logger.error(`Failed to send email via SendGrid: ${error.message}`, error.stack);
+      const recipient = Array.isArray(options.to)
+        ? options.to.join(', ')
+        : options.to;
+      this.logger.log(`Email sent successfully to ${recipient}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to send email via SendGrid: ${message}`, stack);
       throw error;
     }
   }

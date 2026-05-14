@@ -10,7 +10,7 @@ import { map } from 'rxjs/operators';
 export interface ResponseFormat<T> {
   success: boolean;
   message: string;
-  data: T;
+  data: T | null;
 }
 
 @Injectable()
@@ -19,13 +19,13 @@ export class ResponseInterceptor<T>
 {
   intercept(
     context: ExecutionContext,
-    next: CallHandler,
+    next: CallHandler<T>,
   ): Observable<ResponseFormat<T>> {
     return next.handle().pipe(
-      map((response) => {
+      map((response: T): ResponseFormat<T> => {
         // If controller returns already wrapped response, don't double-wrap
         if (response && typeof response === 'object' && 'success' in response) {
-          return response;
+          return response as unknown as ResponseFormat<T>;
         }
 
         // Default wrapping

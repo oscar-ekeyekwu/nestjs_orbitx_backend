@@ -36,10 +36,7 @@ export class OrdersController {
 
   @Get()
   @ApiOperation({ summary: 'Get user orders' })
-  findAll(
-    @CurrentUser() user: User,
-    @Query() query: GetOrdersQueryDto,
-  ) {
+  findAll(@CurrentUser() user: User, @Query() query: GetOrdersQueryDto) {
     return this.ordersService.findAll(user.id, user.role, query);
   }
 

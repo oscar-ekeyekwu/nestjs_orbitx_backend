@@ -48,9 +48,7 @@ export class FaqsService {
 
   async reorder(ids: string[]): Promise<void> {
     await Promise.all(
-      ids.map((id, index) =>
-        this.faqRepo.update(id, { order: index }),
-      ),
+      ids.map((id, index) => this.faqRepo.update(id, { order: index })),
     );
   }
 }

@@ -91,8 +91,9 @@ export class ConfigController {
 
   @Get(':key')
   @ApiOperation({ summary: 'Get a specific configuration by key' })
-  async getByKey(@Param('key') key: string) {
-    return this.configService.get(key);
+  async getByKey(@Param('key') key: string): Promise<{ value: unknown }> {
+    const value = await this.configService.get(key);
+    return { value };
   }
 
   @Put(':key')

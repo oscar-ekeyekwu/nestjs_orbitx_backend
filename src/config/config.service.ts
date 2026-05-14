@@ -42,14 +42,20 @@ export class SystemConfigService implements OnModuleInit {
   private async loadConfigsIntoCache(): Promise<void> {
     const configs = await this.configRepository.find();
     for (const config of configs) {
-      this.configCache.set(config.key, this.parseValue(config.value, config.dataType));
+      this.configCache.set(
+        config.key,
+        this.parseValue(config.value, config.dataType),
+      );
     }
   }
 
   /**
    * Get a configuration value by key
    */
-  async get<T = any>(key: ConfigKey | string, defaultValue?: T): Promise<T> {
+  async get<T = unknown>(
+    key: ConfigKey | string,
+    defaultValue?: T,
+  ): Promise<T> {
     if (this.configCache.has(key)) {
       return this.configCache.get(key) as T;
     }
@@ -70,7 +76,10 @@ export class SystemConfigService implements OnModuleInit {
   /**
    * Get a number configuration value
    */
-  async getNumber(key: ConfigKey | string, defaultValue?: number): Promise<number> {
+  async getNumber(
+    key: ConfigKey | string,
+    defaultValue?: number,
+  ): Promise<number> {
     const value = await this.get(key, defaultValue);
     return Number(value);
   }
@@ -78,7 +87,10 @@ export class SystemConfigService implements OnModuleInit {
   /**
    * Get a boolean configuration value
    */
-  async getBoolean(key: ConfigKey | string, defaultValue?: boolean): Promise<boolean> {
+  async getBoolean(
+    key: ConfigKey | string,
+    defaultValue?: boolean,
+  ): Promise<boolean> {
     const value = await this.get(key, defaultValue);
     return Boolean(value);
   }
@@ -86,7 +98,10 @@ export class SystemConfigService implements OnModuleInit {
   /**
    * Get a string configuration value
    */
-  async getString(key: ConfigKey | string, defaultValue?: string): Promise<string> {
+  async getString(
+    key: ConfigKey | string,
+    defaultValue?: string,
+  ): Promise<string> {
     const value = await this.get(key, defaultValue);
     return String(value);
   }
@@ -160,7 +175,7 @@ export class SystemConfigService implements OnModuleInit {
   /**
    * Parse configuration value based on data type
    */
-  private parseValue(value: string, dataType: string): any {
+  private parseValue(value: string, dataType: string): unknown {
     switch (dataType) {
       case 'number':
         return parseFloat(value);

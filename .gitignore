@@ -42,6 +42,10 @@ lerna-debug.log*
 .env.production.local
 .env.local
 
+# Local docker-compose overrides (e.g. exposing pg port for native backend)
+docker-compose.override.yml
+docker-compose.override.yaml
+
 # temp directory
 .temp
 .tmp

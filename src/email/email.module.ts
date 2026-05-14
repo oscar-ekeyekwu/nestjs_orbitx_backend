@@ -7,10 +7,7 @@ import { SMTPDriver } from './drivers/smtp.driver';
 import { VerificationCode } from './entities/verification-code.entity';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([VerificationCode]),
-    ConfigModule,
-  ],
+  imports: [TypeOrmModule.forFeature([VerificationCode]), ConfigModule],
   providers: [EmailService, SendGridDriver, SMTPDriver],
   exports: [EmailService],
 })

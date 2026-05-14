@@ -49,7 +49,7 @@ export class NotificationsService {
     type: NotificationType,
     title: string,
     message: string,
-    data?: any,
+    data?: Record<string, unknown>,
   ): Promise<Notification> {
     const notification = this.notificationsRepository.create({
       userId,
