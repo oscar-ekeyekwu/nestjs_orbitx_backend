@@ -69,6 +69,12 @@ jobs:
             echo "Waiting for containers to stop..."
             sleep 3
 
+            # docker-compose.yml declares `orbitx-network` as external because
+            # the admin frontend and other services on this VPS share it.
+            # Create it on first deploy / fresh VPS — no-op on subsequent runs.
+            echo "Ensuring shared orbitx-network exists..."
+            docker network create orbitx-network 2>/dev/null || true
+
             echo "Starting services with docker compose..."
             docker compose up -d
 

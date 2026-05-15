@@ -33,10 +33,10 @@ volumes:
   postgres_data:
 
 networks:
-  # Compose-managed network. Was previously `external: true`, which required
-  # `docker network create orbitx-network` to be run by hand on every fresh
-  # VPS — and silently broke the deploy when it wasn't (the `app` service
-  # would fail to start, migrations + seed would skip with "service not
-  # running", and `|| true` in the deploy workflow masked it).
-  # Letting Compose own the network makes the deploy self-contained.
+  # `external: true` is deliberate — this network is shared with other
+  # services running on the same VPS. The deploy workflow ensures it
+  # exists with `docker network create orbitx-network || true` before
+  # `docker compose up`, so a fresh VPS provisions it cleanly without
+  # breaking sibling services on existing hosts.
   orbitx-network:
+    external: true
