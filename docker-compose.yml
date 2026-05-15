@@ -33,5 +33,10 @@ volumes:
   postgres_data:
 
 networks:
+  # `external: true` is deliberate — this network is shared with other
+  # services running on the same VPS. The deploy workflow ensures it
+  # exists with `docker network create orbitx-network || true` before
+  # `docker compose up`, so a fresh VPS provisions it cleanly without
+  # breaking sibling services on existing hosts.
   orbitx-network:
     external: true
