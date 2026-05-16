@@ -29,6 +29,28 @@ class UpdateDriverSettingsDto {
   orderDeliveryRadiusKm?: number;
 }
 
+class UpdatePricingSettingsDto {
+  @IsOptional()
+  @IsNumber()
+  baseFare?: number;
+
+  @IsOptional()
+  @IsNumber()
+  perKmRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  smallPackageMultiplier?: number;
+
+  @IsOptional()
+  @IsNumber()
+  mediumPackageMultiplier?: number;
+
+  @IsOptional()
+  @IsNumber()
+  largePackageMultiplier?: number;
+}
+
 @ApiTags('Configuration')
 @ApiBearerAuth()
 @Controller('config')
@@ -51,6 +73,57 @@ export class ConfigController {
       this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
     ]);
     return { driverMinBalance, orderDeliveryRadiusKm };
+  }
+
+  @Get('pricing-settings')
+  @ApiOperation({ summary: 'Get pricing settings used by the order pricing engine' })
+  async getPricingSettings() {
+    const [
+      baseFare,
+      perKmRate,
+      smallPackageMultiplier,
+      mediumPackageMultiplier,
+      largePackageMultiplier,
+    ] = await Promise.all([
+      this.configService.getNumber(ConfigKey.ORDER_BASE_PRICE, 1000),
+      this.configService.getNumber(ConfigKey.ORDER_PRICE_PER_KM, 100),
+      this.configService.getNumber(ConfigKey.PACKAGE_SIZE_SMALL_MULTIPLIER, 1),
+      this.configService.getNumber(ConfigKey.PACKAGE_SIZE_MEDIUM_MULTIPLIER, 1.5),
+      this.configService.getNumber(ConfigKey.PACKAGE_SIZE_LARGE_MULTIPLIER, 2),
+    ]);
+    return {
+      baseFare,
+      perKmRate,
+      smallPackageMultiplier,
+      mediumPackageMultiplier,
+      largePackageMultiplier,
+    };
+  }
+
+  @Put('pricing-settings')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Update pricing settings (Admin only)' })
+  async updatePricingSettings(@Body() dto: UpdatePricingSettingsDto) {
+    const fieldToKey: Array<[keyof UpdatePricingSettingsDto, ConfigKey]> = [
+      ['baseFare', ConfigKey.ORDER_BASE_PRICE],
+      ['perKmRate', ConfigKey.ORDER_PRICE_PER_KM],
+      ['smallPackageMultiplier', ConfigKey.PACKAGE_SIZE_SMALL_MULTIPLIER],
+      ['mediumPackageMultiplier', ConfigKey.PACKAGE_SIZE_MEDIUM_MULTIPLIER],
+      ['largePackageMultiplier', ConfigKey.PACKAGE_SIZE_LARGE_MULTIPLIER],
+    ];
+
+    const updates = fieldToKey
+      .filter(([field]) => dto[field] !== undefined)
+      .map(([field, key]) =>
+        this.configService.update(key, {
+          key,
+          value: String(dto[field]),
+          dataType: 'number',
+        }),
+      );
+
+    await Promise.all(updates);
+    return this.getPricingSettings();
   }
 
   @Put('driver-settings')
