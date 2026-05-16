@@ -32,6 +32,7 @@ import { PaymentModule } from './payment/payment.module';
 import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
 import { SupportTicket } from './support/entities/support-ticket.entity';
+import { NotificationTemplate } from './notifications/entities/notification-template.entity';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -77,6 +78,7 @@ import { SupportTicket } from './support/entities/support-ticket.entity';
           RefreshToken,
           FAQ,
           SupportTicket,
+          NotificationTemplate,
         ],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',

@@ -59,10 +59,10 @@ export class SupportTicket {
   })
   priority: SupportTicketPriority;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   orderId: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   assignedTo: string | null;
 
   @CreateDateColumn()

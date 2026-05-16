@@ -3,19 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { SentMessageInfo, Transporter } from 'nodemailer';
 
-interface OrderDetailsInterface {
-  id: string;
-  pickupAddress: string;
-  deliveryAddress: string;
-  estimatedPrice: number;
-}
-
-interface DriverDetailsInterface {
-  id: string;
-  name: string;
-  phone: string;
-}
-
 @Injectable()
 export class EmailService {
   private transporter: Transporter<SentMessageInfo>;
@@ -76,51 +63,5 @@ export class EmailService {
 
       return { success: false, error: errorMessage };
     }
-  }
-
-  async sendOrderCreatedEmail(to: string, orderDetails: OrderDetailsInterface) {
-    const subject = 'Order Created Successfully';
-    const html = `
-      <h2>Your order has been created!</h2>
-      <p>Order ID: <strong>${orderDetails.id}</strong></p>
-      <p>Pickup: ${orderDetails.pickupAddress}</p>
-      <p>Delivery: ${orderDetails.deliveryAddress}</p>
-      <p>Estimated Price: ₦${orderDetails.estimatedPrice}</p>
-      <p>Thank you for using our service!</p>
-    `;
-
-    return this.sendEmail(to, subject, html);
-  }
-
-  async sendOrderAcceptedEmail(
-    to: string,
-    orderDetails: OrderDetailsInterface,
-    driverDetails: DriverDetailsInterface,
-  ) {
-    const subject = 'Driver Assigned to Your Order';
-    const html = `
-      <h2>A driver has been assigned!</h2>
-      <p>Order ID: <strong>${orderDetails.id}</strong></p>
-      <p>Driver: ${driverDetails.name}</p>
-      <p>Phone: ${driverDetails.phone}</p>
-      <p>Your package will be picked up soon.</p>
-    `;
-
-    return this.sendEmail(to, subject, html);
-  }
-
-  async sendOrderDeliveredEmail(
-    to: string,
-    orderDetails: OrderDetailsInterface,
-  ) {
-    const subject = 'Order Delivered Successfully';
-    const html = `
-      <h2>Your order has been delivered!</h2>
-      <p>Order ID: <strong>${orderDetails.id}</strong></p>
-      <p>Delivery Address: ${orderDetails.deliveryAddress}</p>
-      <p>Thank you for choosing our service!</p>
-    `;
-
-    return this.sendEmail(to, subject, html);
   }
 }

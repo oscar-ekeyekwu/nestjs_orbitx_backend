@@ -3,11 +3,15 @@ import {
   Post,
   Body,
   Get,
+  Delete,
+  Param,
   UseGuards,
   Req,
   Res,
   Ip,
   Headers,
+  HttpCode,
+  HttpStatus,
   NotImplementedException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -22,6 +26,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { VerifyEmailDto } from '../email/dto/verify-email.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 interface GoogleAuthRequest extends Request {
   user: {
@@ -181,5 +186,45 @@ export class AuthController {
   async logoutAll(@CurrentUser() user: User) {
     await this.authService.revokeAllUserTokens(user.id);
     return { message: 'Logged out from all devices successfully' };
+  }
+
+  @Post('change-password')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @ApiOperation({ summary: 'Change the current user password' })
+  async changePassword(
+    @CurrentUser() user: User,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    await this.authService.changePassword(
+      user.id,
+      dto.currentPassword,
+      dto.newPassword,
+    );
+    return {
+      message:
+        'Password changed. All other devices have been signed out — sign in again with the new password.',
+    };
+  }
+
+  @Get('sessions')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'List active sessions for the current user' })
+  async listSessions(@CurrentUser() user: User) {
+    return this.authService.listActiveSessions(user.id);
+  }
+
+  @Delete('sessions/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a specific session' })
+  async revokeSession(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ): Promise<void> {
+    await this.authService.revokeSession(user.id, id);
   }
 }

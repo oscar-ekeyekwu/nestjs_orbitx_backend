@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Notification, NotificationType } from './entities/notification.entity';
+import {
+  NotificationTemplateService,
+  type TemplateVariables,
+} from './notification-template.service';
 import { PushNotificationService } from './push-notification.service';
 import { SmsService } from './sms.service';
 import { EmailService } from './email.service';
@@ -12,13 +16,15 @@ interface OrderDetailsInterface {
   pickupAddress: string;
   deliveryAddress: string;
   estimatedPrice: number;
+  recipientName?: string;
 }
 
 interface CustomerDetailsInterface {
   id: string;
-  fcmToken: string;
-  email: string;
-  phone: string;
+  email?: string | null;
+  phone?: string | null;
+  fcmToken?: string | null;
+  name?: string;
 }
 
 interface DriverDetailsInterface {
@@ -33,11 +39,23 @@ interface PaymentDetailsInterface {
   amount: number;
 }
 
+function stringifyForFcm(
+  data: Record<string, unknown>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined || value === null) continue;
+    out[key] = typeof value === 'string' ? value : String(value);
+  }
+  return out;
+}
+
 @Injectable()
 export class NotificationsService {
   constructor(
     @InjectRepository(Notification)
     private notificationsRepository: Repository<Notification>,
+    private templateService: NotificationTemplateService,
     private pushNotificationService: PushNotificationService,
     private smsService: SmsService,
     private emailService: EmailService,
@@ -96,39 +114,76 @@ export class NotificationsService {
     return { success: true };
   }
 
+  /**
+   * Render the template for `type` and dispatch through every channel the
+   * recipient is reachable on. Returns silently if the admin has disabled
+   * the template — the realtime broadcast is the one exception, since that
+   * is the only delivery the app UI relies on for live updates.
+   */
+  private async dispatch(
+    type: NotificationType,
+    recipient: CustomerDetailsInterface,
+    variables: TemplateVariables,
+    data: Record<string, unknown>,
+    realtimeEvent: { name: string; payload: Record<string, unknown> },
+  ): Promise<void> {
+    // Realtime always fires — it's the live socket update for the in-app UI.
+    this.realtimeGateway.notifyUser(
+      recipient.id,
+      realtimeEvent.name,
+      realtimeEvent.payload,
+    );
+
+    const rendered = await this.templateService.render(type, variables);
+    if (!rendered) return;
+
+    await this.create(
+      recipient.id,
+      type,
+      rendered.title,
+      rendered.body,
+      data,
+    );
+
+    if (recipient.fcmToken) {
+      await this.pushNotificationService.sendToDevice(
+        recipient.fcmToken,
+        rendered.title,
+        rendered.body,
+        stringifyForFcm(data),
+      );
+    }
+
+    if (recipient.email && rendered.emailSubject && rendered.emailBody) {
+      await this.emailService.sendEmail(
+        recipient.email,
+        rendered.emailSubject,
+        rendered.emailBody,
+      );
+    }
+
+    if (recipient.phone && rendered.smsBody) {
+      await this.smsService.sendSms(recipient.phone, rendered.smsBody);
+    }
+  }
+
   async notifyOrderCreated(
     order: OrderDetailsInterface,
     customer: CustomerDetailsInterface,
   ) {
-    const title = 'Order Created';
-    const message = `Your order #${order.id} has been created successfully.`;
-
-    // Save notification
-    await this.create(
-      customer.id,
+    await this.dispatch(
       NotificationType.ORDER_CREATED,
-      title,
-      message,
+      customer,
       {
         orderId: order.id,
+        customerName: customer.name ?? '',
+        pickupAddress: order.pickupAddress,
+        deliveryAddress: order.deliveryAddress,
+        estimatedPrice: order.estimatedPrice,
       },
+      { orderId: order.id },
+      { name: 'order_created', payload: { order } },
     );
-
-    // Send push notification (if FCM token available)
-    if (customer.fcmToken) {
-      await this.pushNotificationService.sendToDevice(
-        customer.fcmToken,
-        title,
-        message,
-        { orderId: order.id },
-      );
-    }
-
-    // Send email
-    await this.emailService.sendOrderCreatedEmail(customer.email, order);
-
-    // Real-time notification
-    this.realtimeGateway.notifyUser(customer.id, 'order_created', { order });
   }
 
   async notifyOrderAccepted(
@@ -136,114 +191,86 @@ export class NotificationsService {
     customer: CustomerDetailsInterface,
     driver: DriverDetailsInterface,
   ) {
-    const title = 'Driver Assigned';
-    const message = `${driver.name} has accepted your order #${order.id}.`;
-
-    await this.create(
-      customer.id,
+    await this.dispatch(
       NotificationType.ORDER_ACCEPTED,
-      title,
-      message,
+      customer,
       {
         orderId: order.id,
-        driverId: driver.id,
+        customerName: customer.name ?? '',
+        driverName: driver.name,
+        driverPhone: driver.phone,
       },
+      { orderId: order.id, driverId: driver.id },
+      { name: 'order_accepted', payload: { order, driver } },
     );
-
-    if (customer.fcmToken) {
-      await this.pushNotificationService.sendToDevice(
-        customer.fcmToken,
-        title,
-        message,
-        { orderId: order.id },
-      );
-    }
-
-    await this.emailService.sendOrderAcceptedEmail(
-      customer.email,
-      order,
-      driver,
-    );
-
-    // Send SMS
-    if (customer.phone) {
-      await this.smsService.sendSms(
-        customer.phone,
-        `Driver ${driver.name} has been assigned to your order. Track: ${order.id}`,
-      );
-    }
-
-    this.realtimeGateway.notifyUser(customer.id, 'order_accepted', {
-      order,
-      driver,
-    });
   }
 
   async notifyOrderPickedUp(
     order: OrderDetailsInterface,
     customer: CustomerDetailsInterface,
   ) {
-    const title = 'Package Picked Up';
-    const message = `Your package has been picked up and is on the way.`;
-
-    await this.create(
-      customer.id,
+    await this.dispatch(
       NotificationType.ORDER_PICKED_UP,
-      title,
-      message,
+      customer,
       {
         orderId: order.id,
+        customerName: customer.name ?? '',
       },
+      { orderId: order.id },
+      { name: 'order_picked_up', payload: { order } },
     );
+  }
 
-    if (customer.fcmToken) {
-      await this.pushNotificationService.sendToDevice(
-        customer.fcmToken,
-        title,
-        message,
-        { orderId: order.id },
-      );
-    }
-
-    this.realtimeGateway.notifyUser(customer.id, 'order_picked_up', { order });
+  async notifyOrderInTransit(
+    order: OrderDetailsInterface,
+    customer: CustomerDetailsInterface,
+  ) {
+    await this.dispatch(
+      NotificationType.ORDER_IN_TRANSIT,
+      customer,
+      {
+        orderId: order.id,
+        customerName: customer.name ?? '',
+        recipientName: order.recipientName ?? '',
+      },
+      { orderId: order.id },
+      { name: 'order_in_transit', payload: { order } },
+    );
   }
 
   async notifyOrderDelivered(
     order: OrderDetailsInterface,
     customer: CustomerDetailsInterface,
   ) {
-    const title = 'Order Delivered';
-    const message = `Your order #${order.id} has been delivered successfully!`;
-
-    await this.create(
-      customer.id,
+    await this.dispatch(
       NotificationType.ORDER_DELIVERED,
-      title,
-      message,
+      customer,
       {
         orderId: order.id,
+        customerName: customer.name ?? '',
+        recipientName: order.recipientName ?? '',
       },
+      { orderId: order.id },
+      { name: 'order_delivered', payload: { order } },
     );
+  }
 
-    if (customer.fcmToken) {
-      await this.pushNotificationService.sendToDevice(
-        customer.fcmToken,
-        title,
-        message,
-        { orderId: order.id },
-      );
-    }
-
-    await this.emailService.sendOrderDeliveredEmail(customer.email, order);
-
-    if (customer.phone) {
-      await this.smsService.sendSms(
-        customer.phone,
-        `Your order #${order.id} has been delivered. Thank you for using our service!`,
-      );
-    }
-
-    this.realtimeGateway.notifyUser(customer.id, 'order_delivered', { order });
+  async notifyOrderCancelled(
+    order: OrderDetailsInterface,
+    customer: CustomerDetailsInterface,
+    reason?: string,
+  ) {
+    await this.dispatch(
+      NotificationType.ORDER_CANCELLED,
+      customer,
+      {
+        orderId: order.id,
+        customerName: customer.name ?? '',
+        reason: reason ?? '',
+      },
+      { orderId: order.id, reason },
+      { name: 'order_cancelled', payload: { order, reason } },
+    );
   }
 
   async notifyNewOrderToDrivers(order: OrderDetailsInterface) {
@@ -259,59 +286,33 @@ export class NotificationsService {
     payment: PaymentDetailsInterface,
     user: CustomerDetailsInterface,
   ) {
-    const title = 'Payment Successful';
-    const message = `Your payment of ₦${payment.amount} was successful.`;
-
-    await this.create(
-      user.id,
+    await this.dispatch(
       NotificationType.PAYMENT_SUCCESS,
-      title,
-      message,
+      user,
       {
-        paymentId: payment.id,
         orderId: payment.orderId,
+        customerName: user.name ?? '',
+        amount: payment.amount,
       },
+      { paymentId: payment.id, orderId: payment.orderId },
+      { name: 'payment_success', payload: { payment } },
     );
-
-    if (user.fcmToken) {
-      await this.pushNotificationService.sendToDevice(
-        user.fcmToken,
-        title,
-        message,
-        { paymentId: payment.id },
-      );
-    }
-
-    this.realtimeGateway.notifyUser(user.id, 'payment_success', { payment });
   }
 
   async notifyPaymentFailed(
     payment: PaymentDetailsInterface,
     user: CustomerDetailsInterface,
   ) {
-    const title = 'Payment Failed';
-    const message = `Your payment of ₦${payment.amount} failed. Please try again.`;
-
-    await this.create(
-      user.id,
+    await this.dispatch(
       NotificationType.PAYMENT_FAILED,
-      title,
-      message,
+      user,
       {
-        paymentId: payment.id,
         orderId: payment.orderId,
+        customerName: user.name ?? '',
+        amount: payment.amount,
       },
+      { paymentId: payment.id, orderId: payment.orderId },
+      { name: 'payment_failed', payload: { payment } },
     );
-
-    if (user.fcmToken) {
-      await this.pushNotificationService.sendToDevice(
-        user.fcmToken,
-        title,
-        message,
-        { paymentId: payment.id },
-      );
-    }
-
-    this.realtimeGateway.notifyUser(user.id, 'payment_failed', { payment });
   }
 }

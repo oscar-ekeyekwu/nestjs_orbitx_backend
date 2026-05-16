@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -221,6 +225,72 @@ export class AuthService {
   async revokeAllUserTokens(userId: string): Promise<void> {
     await this.refreshTokenRepository.update(
       { userId, isRevoked: false },
+      { isRevoked: true },
+    );
+  }
+
+  /**
+   * Change the user's password. Requires the current password as proof. On
+   * success, revokes all of the user's refresh tokens so other devices are
+   * signed out — the caller is responsible for issuing a new session.
+   */
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+    const ok = await user.validatePassword(currentPassword);
+    if (!ok) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException(
+        'New password must differ from the current password',
+      );
+    }
+    await this.usersService.update(userId, { password: newPassword });
+    await this.revokeAllUserTokens(userId);
+  }
+
+  /**
+   * List active (non-revoked, non-expired) refresh tokens for the user. The
+   * raw token string is never returned — only metadata about the device.
+   */
+  async listActiveSessions(userId: string) {
+    const tokens = await this.refreshTokenRepository
+      .createQueryBuilder('rt')
+      .where('rt.userId = :userId', { userId })
+      .andWhere('rt.isRevoked = false')
+      .andWhere('rt.expiresAt > :now', { now: new Date() })
+      .orderBy('rt.createdAt', 'DESC')
+      .getMany();
+    return tokens.map((t) => ({
+      id: t.id,
+      ipAddress: t.ipAddress ?? null,
+      userAgent: t.userAgent ?? null,
+      deviceId: t.deviceId ?? null,
+      createdAt: t.createdAt,
+      expiresAt: t.expiresAt,
+    }));
+  }
+
+  /**
+   * Revoke a specific session owned by the user. 404s if the session doesn't
+   * exist or belongs to someone else.
+   */
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    const session = await this.refreshTokenRepository.findOne({
+      where: { id: sessionId, userId },
+    });
+    if (!session) {
+      throw new UnauthorizedException('Session not found');
+    }
+    await this.refreshTokenRepository.update(
+      { id: sessionId },
       { isRevoked: true },
     );
   }
