@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../common/enums/user-role.enum';
 import { Order, OrderStatus } from '../orders/entities/order.entity';
+import { Transaction } from '../wallet/entities/transaction.entity';
 
 export interface Trend {
   deltaPercent: number;
@@ -43,6 +44,8 @@ export class AdminService {
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Order) private readonly orderRepo: Repository<Order>,
+    @InjectRepository(Transaction)
+    private readonly transactionRepo: Repository<Transaction>,
   ) {}
 
   async getDashboardStats(): Promise<DashboardStats> {
@@ -211,6 +214,65 @@ export class AdminService {
       .getCount();
   }
 
+  async exportUsersCsv(): Promise<string> {
+    const users = await this.userRepo.find({ order: { createdAt: 'DESC' } });
+    return toCsv(users, [
+      ['id', (u) => u.id],
+      ['email', (u) => u.email],
+      ['first_name', (u) => u.first_name],
+      ['last_name', (u) => u.last_name],
+      ['phone', (u) => u.phone],
+      ['role', (u) => u.role],
+      ['email_verified', (u) => u.isEmailVerified],
+      ['phone_verified', (u) => u.isPhoneVerified],
+      ['is_active', (u) => u.isActive],
+      ['created_at', (u) => u.createdAt],
+    ]);
+  }
+
+  async exportOrdersCsv(): Promise<string> {
+    const orders = await this.orderRepo.find({
+      order: { createdAt: 'DESC' },
+    });
+    return toCsv(orders, [
+      ['id', (o) => o.id],
+      ['customer_id', (o) => o.customerId],
+      ['driver_id', (o) => o.driverId],
+      ['status', (o) => o.status],
+      ['package_size', (o) => o.packageSize],
+      ['pickup_address', (o) => o.pickupAddress],
+      ['delivery_address', (o) => o.deliveryAddress],
+      ['recipient_name', (o) => o.recipientName],
+      ['recipient_phone', (o) => o.recipientPhone],
+      ['estimated_price', (o) => o.estimatedPrice],
+      ['final_price', (o) => o.finalPrice],
+      ['accepted_at', (o) => o.acceptedAt],
+      ['picked_up_at', (o) => o.pickedUpAt],
+      ['delivered_at', (o) => o.deliveredAt],
+      ['created_at', (o) => o.createdAt],
+    ]);
+  }
+
+  async exportTransactionsCsv(): Promise<string> {
+    const txs = await this.transactionRepo.find({
+      order: { createdAt: 'DESC' },
+    });
+    return toCsv(txs, [
+      ['id', (t) => t.id],
+      ['wallet_id', (t) => t.walletId],
+      ['order_id', (t) => t.orderId],
+      ['type', (t) => t.type],
+      ['amount', (t) => t.amount],
+      ['commission', (t) => t.commission],
+      ['balance_after', (t) => t.balanceAfter],
+      ['status', (t) => t.status],
+      ['payment_method', (t) => t.paymentMethod],
+      ['description', (t) => t.description],
+      ['reference', (t) => t.reference],
+      ['created_at', (t) => t.createdAt],
+    ]);
+  }
+
   private async sumDeliveredRevenueBetween(
     start?: Date,
     end?: Date,
@@ -236,6 +298,30 @@ function addDays(d: Date, days: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + days);
   return x;
+}
+
+type CsvColumn<T> = [header: string, getter: (row: T) => unknown];
+
+function toCsv<T>(rows: T[], columns: CsvColumn<T>[]): string {
+  const headerLine = columns.map(([h]) => csvEscape(h)).join(',');
+  const dataLines = rows.map((row) =>
+    columns.map(([, get]) => csvEscape(get(row))).join(','),
+  );
+  return [headerLine, ...dataLines].join('\n');
+}
+
+function csvEscape(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const raw =
+    value instanceof Date
+      ? value.toISOString()
+      : typeof value === 'string'
+        ? value
+        : String(value);
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
 }
 
 function trend(current: number, previous: number): Trend {

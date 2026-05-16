@@ -1,5 +1,6 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Res, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -25,4 +26,38 @@ export class AdminController {
   async getTimeseries() {
     return this.adminService.getTimeseries();
   }
+
+  @Get('export/users')
+  @ApiOperation({ summary: 'Export all users as CSV (Admin only)' })
+  async exportUsers(@Res() res: Response) {
+    const csv = await this.adminService.exportUsersCsv();
+    sendCsv(res, csv, `users-${stamp()}.csv`);
+  }
+
+  @Get('export/orders')
+  @ApiOperation({ summary: 'Export all orders as CSV (Admin only)' })
+  async exportOrders(@Res() res: Response) {
+    const csv = await this.adminService.exportOrdersCsv();
+    sendCsv(res, csv, `orders-${stamp()}.csv`);
+  }
+
+  @Get('export/transactions')
+  @ApiOperation({ summary: 'Export all transactions as CSV (Admin only)' })
+  async exportTransactions(@Res() res: Response) {
+    const csv = await this.adminService.exportTransactionsCsv();
+    sendCsv(res, csv, `transactions-${stamp()}.csv`);
+  }
+}
+
+function sendCsv(res: Response, body: string, filename: string): void {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${filename}"`,
+  );
+  res.send(body);
+}
+
+function stamp(): string {
+  return new Date().toISOString().slice(0, 10);
 }

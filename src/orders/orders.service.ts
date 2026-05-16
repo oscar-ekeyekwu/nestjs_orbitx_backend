@@ -22,6 +22,8 @@ import {
 } from '../common/dto/pagination.dto';
 import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { NotificationsService } from '../notifications/notification.service';
+import { User } from '../users/entities/user.entity';
 
 @Injectable()
 export class OrdersService {
@@ -33,7 +35,37 @@ export class OrdersService {
     // forwardRef because RealtimeGateway (in RealtimeModule) also depends on OrdersService.
     @Inject(forwardRef(() => RealtimeGateway))
     private realtimeGateway: RealtimeGateway,
+    private notifications: NotificationsService,
   ) {}
+
+  /**
+   * Build the recipient descriptor the NotificationsService expects from a
+   * User entity. fcmToken is intentionally absent — User doesn't yet store
+   * one, and the dispatcher skips push when missing.
+   */
+  private recipient(user: User) {
+    return {
+      id: user.id,
+      email: user.email,
+      phone: user.phone,
+      name: user.name,
+    };
+  }
+
+  /**
+   * Best-effort notification dispatch. A notification failure must never
+   * surface as a 500 to the caller — log and continue.
+   */
+  private async safeNotify(
+    label: string,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await fn();
+    } catch (error) {
+      console.error(`Notification dispatch failed (${label}):`, error);
+    }
+  }
 
   /**
    * Realtime emit failures must never roll back a successful DB write.
@@ -73,6 +105,19 @@ export class OrdersService {
       () => this.realtimeGateway.emitNewOrderToDrivers(savedOrder),
       'new_order_available',
     );
+
+    const withCustomer = await this.ordersRepository.findOne({
+      where: { id: savedOrder.id },
+      relations: ['customer'],
+    });
+    if (withCustomer?.customer) {
+      await this.safeNotify('order_created', () =>
+        this.notifications.notifyOrderCreated(
+          withCustomer,
+          this.recipient(withCustomer.customer),
+        ),
+      );
+    }
 
     return savedOrder;
   }
@@ -215,6 +260,20 @@ export class OrdersService {
           ),
         'order_status_updated:accepted',
       );
+
+      if (acceptedOrder.customer && acceptedOrder.driver) {
+        await this.safeNotify('order_accepted', () =>
+          this.notifications.notifyOrderAccepted(
+            acceptedOrder,
+            this.recipient(acceptedOrder.customer),
+            {
+              id: acceptedOrder.driver.id,
+              name: acceptedOrder.driver.name,
+              phone: acceptedOrder.driver.phone ?? '',
+            },
+          ),
+        );
+      }
     }
 
     return acceptedOrder as Order;
@@ -282,6 +341,29 @@ export class OrdersService {
       `order_status_updated:${savedOrder.status}`,
     );
 
+    if (order.customer) {
+      const recipient = this.recipient(order.customer);
+      switch (savedOrder.status) {
+        case OrderStatus.PICKED_UP:
+          await this.safeNotify('order_picked_up', () =>
+            this.notifications.notifyOrderPickedUp(savedOrder, recipient),
+          );
+          break;
+        case OrderStatus.IN_TRANSIT:
+          await this.safeNotify('order_in_transit', () =>
+            this.notifications.notifyOrderInTransit(savedOrder, recipient),
+          );
+          break;
+        case OrderStatus.DELIVERED:
+          await this.safeNotify('order_delivered', () =>
+            this.notifications.notifyOrderDelivered(savedOrder, recipient),
+          );
+          break;
+        default:
+          break;
+      }
+    }
+
     return savedOrder;
   }
 
@@ -335,6 +417,15 @@ export class OrdersService {
         ),
       'order_status_updated:cancelled',
     );
+
+    if (order.customer) {
+      await this.safeNotify('order_cancelled', () =>
+        this.notifications.notifyOrderCancelled(
+          savedOrder,
+          this.recipient(order.customer),
+        ),
+      );
+    }
 
     return savedOrder;
   }

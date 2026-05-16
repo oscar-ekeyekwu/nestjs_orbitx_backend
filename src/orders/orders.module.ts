@@ -7,6 +7,7 @@ import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { SystemConfigModule } from '../config/config.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { NotificationsModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     // forwardRef because RealtimeModule also imports OrdersModule
     // (gateway calls back into ordersService for driver-location persistence).
     forwardRef(() => RealtimeModule),
+    NotificationsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],
