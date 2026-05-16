@@ -69,10 +69,23 @@ export class UsersController {
   }
 
   /**
+   * Update a specific user (admin use)
+   */
+  @Patch(':id')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Update a user (Admin only)' })
+  async update(
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+  ): Promise<User> {
+    return this.usersService.update(id, updateUserDto);
+  }
+
+  /**
    * Delete a specific user (admin use)
    */
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id') id: string): Promise<void> {
     await this.usersService.remove(id);

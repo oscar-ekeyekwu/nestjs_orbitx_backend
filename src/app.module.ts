@@ -29,6 +29,9 @@ import { UploadModule } from './upload/upload.module';
 import { FaqsModule } from './faqs/faqs.module';
 import { FAQ } from './faqs/entities/faq.entity';
 import { PaymentModule } from './payment/payment.module';
+import { AdminModule } from './admin/admin.module';
+import { SupportModule } from './support/support.module';
+import { SupportTicket } from './support/entities/support-ticket.entity';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -73,6 +76,7 @@ import { PaymentModule } from './payment/payment.module';
           VirtualAccount,
           RefreshToken,
           FAQ,
+          SupportTicket,
         ],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',
@@ -92,6 +96,8 @@ import { PaymentModule } from './payment/payment.module';
     UploadModule,
     FaqsModule,
     PaymentModule,
+    AdminModule,
+    SupportModule,
   ],
   controllers: [],
   providers: [
