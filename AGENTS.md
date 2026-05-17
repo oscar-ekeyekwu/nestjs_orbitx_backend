@@ -14,6 +14,10 @@ It contains 289 critical rules across 7 categories — technology stack & versio
 - **Working branch**: `development` (PRs into `development`; merge to `main` triggers deploy).
 - **Lint/build/test**: `npm run lint`, `npm run build`, `npm run test`, `npm run test:e2e`.
 - **Migrations**: `npm run migration:generate <name>`, `npm run migration:run`. Forward-only after merge.
+  - The v1 baseline lives in `src/database/migrations/1779840000000-InitialV1Migration.ts` (ARCH-2). Every migration that ships after it is additive — never edit the baseline once it's deployed.
+  - The pre-v1 prototype migrations are kept in `src/database/migrations/_archived/` and ignored by the runner (the glob is non-recursive). Do **not** move them back.
+  - Seed v1 rows with `npm run seed:v1` after the baseline migration; it's idempotent and won't overwrite admin-tuned `system_configs` values on re-run.
+  - **NFR-S5 audit immutability**: `approval_decisions` and `transactions` revoke UPDATE/DELETE from the `orbit_app` Postgres role. Provision that role on staging + prod (the migration's `DO $$ ... END $$` block no-ops in dev).
 - **API**: `/api/v1/*`. Swagger at `/api/v1/docs`. Global response envelope (`{ success, message, data }`) and error envelope (`{ success: false, errorCode, message, ... }`) — do not bypass.
 
 ## Money handling (ARCH-1)
