@@ -16,7 +16,9 @@ export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   @Get('dashboard/stats')
-  @ApiOperation({ summary: 'Dashboard counts + week-over-week trends (Admin only)' })
+  @ApiOperation({
+    summary: 'Dashboard counts + week-over-week trends (Admin only)',
+  })
   async getStats() {
     return this.adminService.getDashboardStats();
   }
@@ -51,10 +53,7 @@ export class AdminController {
 
 function sendCsv(res: Response, body: string, filename: string): void {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader(
-    'Content-Disposition',
-    `attachment; filename="${filename}"`,
-  );
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(body);
 }
 

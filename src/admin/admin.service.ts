@@ -312,12 +312,22 @@ function toCsv<T>(rows: T[], columns: CsvColumn<T>[]): string {
 
 function csvEscape(value: unknown): string {
   if (value === null || value === undefined) return '';
-  const raw =
-    value instanceof Date
-      ? value.toISOString()
-      : typeof value === 'string'
-        ? value
-        : String(value);
+  let raw: string;
+  if (value instanceof Date) {
+    raw = value.toISOString();
+  } else if (typeof value === 'string') {
+    raw = value;
+  } else if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    raw = String(value);
+  } else {
+    // Object/array fallback — JSON-stringify so the CSV cell carries
+    // meaningful content rather than '[object Object]'.
+    raw = JSON.stringify(value);
+  }
   if (/[",\n\r]/.test(raw)) {
     return `"${raw.replace(/"/g, '""')}"`;
   }

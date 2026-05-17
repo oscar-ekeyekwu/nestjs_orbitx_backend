@@ -76,7 +76,9 @@ export class ConfigController {
   }
 
   @Get('pricing-settings')
-  @ApiOperation({ summary: 'Get pricing settings used by the order pricing engine' })
+  @ApiOperation({
+    summary: 'Get pricing settings used by the order pricing engine',
+  })
   async getPricingSettings() {
     const [
       baseFare,
@@ -88,7 +90,10 @@ export class ConfigController {
       this.configService.getNumber(ConfigKey.ORDER_BASE_PRICE, 1000),
       this.configService.getNumber(ConfigKey.ORDER_PRICE_PER_KM, 100),
       this.configService.getNumber(ConfigKey.PACKAGE_SIZE_SMALL_MULTIPLIER, 1),
-      this.configService.getNumber(ConfigKey.PACKAGE_SIZE_MEDIUM_MULTIPLIER, 1.5),
+      this.configService.getNumber(
+        ConfigKey.PACKAGE_SIZE_MEDIUM_MULTIPLIER,
+        1.5,
+      ),
       this.configService.getNumber(ConfigKey.PACKAGE_SIZE_LARGE_MULTIPLIER, 2),
     ]);
     return {

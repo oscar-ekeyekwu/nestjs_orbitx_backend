@@ -45,7 +45,19 @@ function stringifyForFcm(
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(data)) {
     if (value === undefined || value === null) continue;
-    out[key] = typeof value === 'string' ? value : String(value);
+    if (typeof value === 'string') {
+      out[key] = value;
+    } else if (
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      typeof value === 'bigint'
+    ) {
+      out[key] = String(value);
+    } else {
+      // FCM data payloads must be string-valued. Objects/arrays are
+      // JSON-stringified so consumers can JSON.parse on the client side.
+      out[key] = JSON.stringify(value);
+    }
   }
   return out;
 }
@@ -137,13 +149,7 @@ export class NotificationsService {
     const rendered = await this.templateService.render(type, variables);
     if (!rendered) return;
 
-    await this.create(
-      recipient.id,
-      type,
-      rendered.title,
-      rendered.body,
-      data,
-    );
+    await this.create(recipient.id, type, rendered.title, rendered.body, data);
 
     if (recipient.fcmToken) {
       await this.pushNotificationService.sendToDevice(

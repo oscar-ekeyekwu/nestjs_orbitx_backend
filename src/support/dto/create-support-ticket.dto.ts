@@ -16,7 +16,9 @@ export class CreateSupportTicketDto {
   @MaxLength(200)
   subject: string;
 
-  @ApiProperty({ example: 'The driver marked the order as picked up but never arrived...' })
+  @ApiProperty({
+    example: 'The driver marked the order as picked up but never arrived...',
+  })
   @IsString()
   @MinLength(10)
   @MaxLength(2000)
