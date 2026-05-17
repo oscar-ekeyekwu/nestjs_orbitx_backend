@@ -16,6 +16,9 @@ export enum ConfigKey {
   // System Settings
   MAX_ORDERS_PER_DRIVER = 'MAX_ORDERS_PER_DRIVER',
   ORDER_AUTO_CANCEL_MINUTES = 'ORDER_AUTO_CANCEL_MINUTES',
+
+  // Feature Flags
+  USE_MAP_VIEW = 'USE_MAP_VIEW',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -77,5 +80,11 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'Minutes before an unaccepted order is automatically cancelled',
     dataType: 'number',
+  },
+  [ConfigKey.USE_MAP_VIEW]: {
+    value: 'true',
+    description:
+      'When true, customer order tracking screen renders the Google Map view. When false, renders the timeline-only fallback.',
+    dataType: 'boolean',
   },
 };
