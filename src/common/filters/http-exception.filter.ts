@@ -27,6 +27,38 @@ interface ErrorResponseBody {
   errors?: unknown[];
 }
 
+// NFR-S5 / ARCH-7: tables whose UPDATE+DELETE privileges are revoked from
+// the orbit_app role at the database layer. Any 42501 (insufficient
+// privilege) Postgres error that mentions one of these tables is mapped
+// to SYS_005 so the API surface is unambiguous about what happened.
+const AUDIT_TABLES = ['approval_decisions', 'transactions'] as const;
+const PG_INSUFFICIENT_PRIVILEGE = '42501';
+
+interface PgDriverError {
+  code?: string;
+  table?: string;
+  message?: string;
+}
+
+function isAuditImmutabilityViolation(exception: unknown): boolean {
+  if (!exception || typeof exception !== 'object') return false;
+
+  const err = exception as {
+    driverError?: PgDriverError;
+    code?: string;
+    message?: string;
+    table?: string;
+  };
+  const code = err.driverError?.code ?? err.code;
+  if (code !== PG_INSUFFICIENT_PRIVILEGE) return false;
+
+  const table = err.driverError?.table ?? err.table ?? '';
+  const driverMessage = err.driverError?.message ?? '';
+  const haystack =
+    `${table} ${driverMessage} ${err.message ?? ''}`.toLowerCase();
+  return AUDIT_TABLES.some((t) => haystack.includes(t));
+}
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
@@ -39,7 +71,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let errorCode: ErrorCode = ErrorCodes.SYS_001;
     let errors: unknown[] | undefined;
 
-    if (exception instanceof HttpException) {
+    if (isAuditImmutabilityViolation(exception)) {
+      status = HttpStatus.FORBIDDEN;
+      errorCode = ErrorCodes.SYS_005;
+      message =
+        'Audit table is append-only at the database layer. UPDATE / DELETE on transactions and approval_decisions is denied to the application role.';
+    } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const res = exception.getResponse();
 

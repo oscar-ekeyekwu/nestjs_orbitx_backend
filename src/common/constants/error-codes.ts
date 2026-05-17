@@ -68,7 +68,12 @@ export const ErrorCodes = {
   SYS_002: 'DATABASE_ERROR',
   SYS_003: 'SERVICE_UNAVAILABLE',
   SYS_004: 'RATE_LIMIT_EXCEEDED',
-  SYS_005: 'CONFIGURATION_ERROR',
+  // ARCH-7: returned when the database refuses an UPDATE/DELETE against
+  // an append-only audit table (transactions, approval_decisions) because
+  // the orbit_app role lacks the privilege. If you see this in prod, the
+  // calling code attempted to mutate the audit ledger — fix the caller.
+  SYS_005: 'AUDIT_IMMUTABILITY_VIOLATION',
+  SYS_006: 'CONFIGURATION_ERROR',
 
   // Notification errors (NOTIF_xxx)
   NOTIF_001: 'NOTIFICATION_SEND_FAILED',
