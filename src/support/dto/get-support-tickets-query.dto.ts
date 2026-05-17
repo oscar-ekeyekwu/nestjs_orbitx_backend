@@ -17,7 +17,9 @@ export class GetSupportTicketsQueryDto extends PaginationDto {
   @IsEnum(SupportTicketPriority)
   priority?: SupportTicketPriority;
 
-  @ApiPropertyOptional({ description: 'Substring match on subject or description' })
+  @ApiPropertyOptional({
+    description: 'Substring match on subject or description',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(100)

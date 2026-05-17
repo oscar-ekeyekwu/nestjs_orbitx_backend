@@ -15,21 +15,24 @@ const DEFAULT_TEMPLATES: Record<NotificationType, DefaultTemplate> = {
     title: 'Order placed',
     body: 'Your order #{{orderId}} has been placed.',
     emailSubject: 'Order #{{orderId}} placed',
-    emailBody: 'Hi {{customerName}}, your delivery order #{{orderId}} is in. We will let you know when a driver accepts.',
+    emailBody:
+      'Hi {{customerName}}, your delivery order #{{orderId}} is in. We will let you know when a driver accepts.',
     smsBody: 'OrbitX: order #{{orderId}} placed.',
   },
   [NotificationType.ORDER_ACCEPTED]: {
     title: 'Driver accepted',
     body: '{{driverName}} accepted your order #{{orderId}}.',
     emailSubject: 'A driver is on the way',
-    emailBody: '{{driverName}} accepted your order #{{orderId}} and is heading to pickup.',
+    emailBody:
+      '{{driverName}} accepted your order #{{orderId}} and is heading to pickup.',
     smsBody: 'OrbitX: {{driverName}} accepted order #{{orderId}}.',
   },
   [NotificationType.ORDER_PICKED_UP]: {
     title: 'Package picked up',
     body: 'Your driver has picked up order #{{orderId}}.',
     emailSubject: 'Package picked up',
-    emailBody: 'Your driver has picked up order #{{orderId}}. It is now en route.',
+    emailBody:
+      'Your driver has picked up order #{{orderId}}. It is now en route.',
     smsBody: 'OrbitX: order #{{orderId}} picked up.',
   },
   [NotificationType.ORDER_IN_TRANSIT]: {
@@ -43,7 +46,8 @@ const DEFAULT_TEMPLATES: Record<NotificationType, DefaultTemplate> = {
     title: 'Delivered',
     body: 'Order #{{orderId}} was delivered.',
     emailSubject: 'Delivered',
-    emailBody: 'Order #{{orderId}} was delivered to {{recipientName}}. Thanks for using OrbitX.',
+    emailBody:
+      'Order #{{orderId}} was delivered to {{recipientName}}. Thanks for using OrbitX.',
     smsBody: 'OrbitX: order #{{orderId}} delivered.',
   },
   [NotificationType.ORDER_CANCELLED]: {
@@ -64,7 +68,8 @@ const DEFAULT_TEMPLATES: Record<NotificationType, DefaultTemplate> = {
     title: 'Payment failed',
     body: 'Payment for order #{{orderId}} could not be processed.',
     emailSubject: 'Payment failed',
-    emailBody: 'Payment for order #{{orderId}} could not be processed. Please try a different method.',
+    emailBody:
+      'Payment for order #{{orderId}} could not be processed. Please try a different method.',
     smsBody: 'OrbitX: payment for order #{{orderId}} failed.',
   },
   [NotificationType.NEW_MESSAGE]: {
@@ -161,7 +166,9 @@ export class NotificationTemplateService implements OnModuleInit {
       emailBody: template.emailBody
         ? substitute(template.emailBody, variables)
         : null,
-      smsBody: template.smsBody ? substitute(template.smsBody, variables) : null,
+      smsBody: template.smsBody
+        ? substitute(template.smsBody, variables)
+        : null,
     };
   }
 
@@ -178,7 +185,10 @@ export class NotificationTemplateService implements OnModuleInit {
   }
 }
 
-export type TemplateVariables = Record<string, string | number | null | undefined>;
+export type TemplateVariables = Record<
+  string,
+  string | number | null | undefined
+>;
 
 export interface RenderedTemplate {
   title: string;

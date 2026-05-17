@@ -16,7 +16,9 @@ export class UpdateSupportTicketDto {
   @IsEnum(SupportTicketPriority)
   priority?: SupportTicketPriority;
 
-  @ApiPropertyOptional({ description: 'Admin user id this ticket is assigned to' })
+  @ApiPropertyOptional({
+    description: 'Admin user id this ticket is assigned to',
+  })
   @IsOptional()
   @IsUUID()
   assignedTo?: string;

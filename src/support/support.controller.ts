@@ -29,11 +29,10 @@ export class SupportController {
   constructor(private readonly supportService: SupportService) {}
 
   @Post()
-  @ApiOperation({ summary: 'File a new support ticket (any authenticated user)' })
-  async create(
-    @CurrentUser() user: User,
-    @Body() dto: CreateSupportTicketDto,
-  ) {
+  @ApiOperation({
+    summary: 'File a new support ticket (any authenticated user)',
+  })
+  async create(@CurrentUser() user: User, @Body() dto: CreateSupportTicketDto) {
     return this.supportService.create(user.id, dto);
   }
 
@@ -62,10 +61,7 @@ export class SupportController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update a support ticket (Admin only)' })
-  async update(
-    @Param('id') id: string,
-    @Body() dto: UpdateSupportTicketDto,
-  ) {
+  async update(@Param('id') id: string, @Body() dto: UpdateSupportTicketDto) {
     return this.supportService.update(id, dto);
   }
 }
