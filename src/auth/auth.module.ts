@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthService } from './auth.service';
 import { UsersModule } from '../users/users.module';
+import { DriversModule } from '../drivers/drivers.module';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -14,6 +15,9 @@ import { EmailModule } from '../email/email.module';
   imports: [
     TypeOrmModule.forFeature([RefreshToken]),
     UsersModule,
+    // DriversModule is imported so AuthService can create a DriverProfile in
+    // the same transaction as the User when a driver registers (story A3).
+    DriversModule,
     EmailModule,
     ConfigModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),

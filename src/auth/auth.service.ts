@@ -6,8 +6,9 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { UsersService } from '../users/users.service';
+import { DriversService } from '../drivers/drivers.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -24,9 +25,11 @@ import { VerificationType } from '../email/entities/verification-code.entity';
 export class AuthService {
   constructor(
     private usersService: UsersService,
+    private driversService: DriversService,
     private jwtService: JwtService,
     private configService: ConfigService,
     private emailService: EmailService,
+    private dataSource: DataSource,
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
   ) {}
@@ -36,7 +39,18 @@ export class AuthService {
     ipAddress?: string,
     userAgent?: string,
   ) {
-    const user = await this.usersService.create(registerDto);
+    // Create the User and (for drivers) the DriverProfile inside a single
+    // database transaction so a partial-failure run never leaves an orphan
+    // User without a profile or vice versa. Fixes story A3 silent-go-online
+    // bug at the root.
+    const user = await this.dataSource.transaction(async (manager) => {
+      const newUser = await this.usersService.create(registerDto, manager);
+      if (newUser.role === UserRole.DRIVER) {
+        await this.driversService.createProfile(newUser.id, manager);
+      }
+      return newUser;
+    });
+
     return this.generateAuthResponse(user, undefined, ipAddress, userAgent);
   }
 
@@ -64,6 +78,15 @@ export class AuthService {
       avatar,
       role,
     );
+
+    // Ensure a DriverProfile exists for driver-role Google sign-ins. createProfile
+    // is idempotent — returns the existing row when one is already present, so
+    // returning Google users don't get a duplicate. Not inside a transaction
+    // because createOrUpdateGoogleUser is multi-step (find-or-create) and the
+    // idempotency makes retries safe.
+    if (user.role === UserRole.DRIVER) {
+      await this.driversService.createProfile(user.id);
+    }
 
     return this.generateAuthResponse(user);
   }

@@ -1,24 +1,36 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { DriverProfile } from './entities/driver-profile.entity';
+import { UserRole } from '../common/enums/user-role.enum';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class DriversService {
   constructor(
     @InjectRepository(DriverProfile)
     private driverProfileRepository: Repository<DriverProfile>,
+    private usersService: UsersService,
   ) {}
 
-  async createProfile(userId: string): Promise<DriverProfile> {
-    const existingProfile = await this.findByUserId(userId);
+  async createProfile(
+    userId: string,
+    manager?: EntityManager,
+  ): Promise<DriverProfile> {
+    // Optional EntityManager so callers (e.g. AuthService during driver
+    // registration) can include this insert in their own transaction.
+    const repo = manager
+      ? manager.getRepository(DriverProfile)
+      : this.driverProfileRepository;
+
+    const existingProfile = await repo.findOne({ where: { userId } });
 
     if (existingProfile) {
       return existingProfile;
     }
 
-    const profile = this.driverProfileRepository.create({ userId });
-    return this.driverProfileRepository.save(profile);
+    const profile = repo.create({ userId });
+    return repo.save(profile);
   }
 
   async findByUserId(userId: string): Promise<DriverProfile | null> {
@@ -32,10 +44,21 @@ export class DriversService {
     userId: string,
     isOnline: boolean,
   ): Promise<DriverProfile> {
-    const profile = await this.findByUserId(userId);
+    let profile = await this.findByUserId(userId);
 
     if (!profile) {
-      throw new NotFoundException('Driver profile not found');
+      // Backfill path: drivers registered before A3 shipped don't have a
+      // profile row yet. Auto-create one — but only for users whose role is
+      // actually 'driver'. Any other role missing a profile is a genuine
+      // 404 and should surface as such.
+      const user = await this.usersService.findById(userId);
+      if (!user) {
+        throw new NotFoundException('Driver profile not found');
+      }
+      if (user.role !== UserRole.DRIVER) {
+        throw new NotFoundException('Driver profile not found');
+      }
+      profile = await this.createProfile(userId);
     }
 
     profile.isOnline = isOnline;
