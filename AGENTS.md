@@ -14,7 +14,24 @@ It contains 289 critical rules across 7 categories — technology stack & versio
 - **Working branch**: `development` (PRs into `development`; merge to `main` triggers deploy).
 - **Lint/build/test**: `npm run lint`, `npm run build`, `npm run test`, `npm run test:e2e`.
 - **Migrations**: `npm run migration:generate <name>`, `npm run migration:run`. Forward-only after merge.
+  - The v1 baseline lives in `src/database/migrations/1779840000000-InitialV1Migration.ts` (ARCH-2). Every migration that ships after it is additive — never edit the baseline once it's deployed.
+  - The pre-v1 prototype migrations are kept in `src/database/migrations/_archived/` and ignored by the runner (the glob is non-recursive). Do **not** move them back.
+  - Seed v1 rows with `npm run seed:v1` after the baseline migration; it's idempotent and won't overwrite admin-tuned `system_configs` values on re-run.
+  - **NFR-S5 audit immutability**: `approval_decisions` and `transactions` revoke UPDATE/DELETE from the `orbit_app` Postgres role. Provision that role on staging + prod (the migration's `DO $$ ... END $$` block no-ops in dev).
 - **API**: `/api/v1/*`. Swagger at `/api/v1/docs`. Global response envelope (`{ success, message, data }`) and error envelope (`{ success: false, errorCode, message, ... }`) — do not bypass.
+
+## Money handling (ARCH-1)
+
+Every Naira value in this backend is a branded `decimal.js` value at runtime and a `"\d+\.\d{2}"` string on the wire. The discipline:
+
+- **Import**: `import { naira, Naira, nairaTransformer } from '@/common/money'` (use `import type { Naira }` in entity files because of `emitDecoratorMetadata`).
+- **Construct**: `naira('1000.00')` — string only. A numeric-literal call (`naira(1000)`) is blocked by the `no-restricted-syntax` lint rule in `eslint.config.mjs`. Use `naira(String(n))` if your source is a runtime number (e.g. a DTO field).
+- **Arithmetic**: only `.plus`, `.minus`, `.times`, `.dividedBy` on Naira values. `Naira + number` is caught by `@typescript-eslint/restrict-plus-operands`; assigning a Naira to a `number` slot is a type error.
+- **Entity columns** (decimal money): `@Column('decimal', { precision: 12, scale: 2, transformer: nairaTransformer }) field: Naira;` (or `Naira | null` for nullable columns).
+- **Wire format**: any Naira inside a response object serializes as `"1500.00"` via the `Decimal.prototype.toJSON` override in `src/common/money.ts`. Explicit emitters use `nairaToJSON(value)` or `value.toFixed(2)`.
+- **Forbidden**: `Number(wallet.balance)`, `parseFloat(amount)`, arithmetic via `+` or `-`, `naira(<number literal>)`.
+
+Lat/lng and rating columns (decimal but not money) keep `numericTransformer` from `common/utils/decimal-transformer.ts` and remain typed `number`.
 
 ## Cross-repo coordination
 

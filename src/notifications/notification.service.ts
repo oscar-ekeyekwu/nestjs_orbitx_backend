@@ -10,12 +10,13 @@ import { PushNotificationService } from './push-notification.service';
 import { SmsService } from './sms.service';
 import { EmailService } from './email.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import type { Naira } from '../common/money';
 
 interface OrderDetailsInterface {
   id: string;
   pickupAddress: string;
   deliveryAddress: string;
-  estimatedPrice: number;
+  estimatedPrice: Naira;
   recipientName?: string;
 }
 
@@ -185,7 +186,7 @@ export class NotificationsService {
         customerName: customer.name ?? '',
         pickupAddress: order.pickupAddress,
         deliveryAddress: order.deliveryAddress,
-        estimatedPrice: order.estimatedPrice,
+        estimatedPrice: order.estimatedPrice.toFixed(2),
       },
       { orderId: order.id },
       { name: 'order_created', payload: { order } },

@@ -171,10 +171,11 @@ export class AdminService {
       if (!order.deliveredAt) continue;
       const key = startOfDay(order.deliveredAt).toDateString();
       if (revenueByDay.has(key)) {
-        revenueByDay.set(
-          key,
-          (revenueByDay.get(key) ?? 0) + Number(order.finalPrice ?? 0),
-        );
+        // Dashboard chart aggregation: Naira → number via Decimal.valueOf()
+        // tolerates kobo precision for chart display. Ledger math elsewhere
+        // stays in Decimal to keep kobo exactness.
+        const finalPrice = order.finalPrice ? order.finalPrice.toNumber() : 0;
+        revenueByDay.set(key, (revenueByDay.get(key) ?? 0) + finalPrice);
       }
     }
 
@@ -244,8 +245,8 @@ export class AdminService {
       ['delivery_address', (o) => o.deliveryAddress],
       ['recipient_name', (o) => o.recipientName],
       ['recipient_phone', (o) => o.recipientPhone],
-      ['estimated_price', (o) => o.estimatedPrice],
-      ['final_price', (o) => o.finalPrice],
+      ['estimated_price', (o) => o.estimatedPrice.toFixed(2)],
+      ['final_price', (o) => o.finalPrice?.toFixed(2) ?? ''],
       ['accepted_at', (o) => o.acceptedAt],
       ['picked_up_at', (o) => o.pickedUpAt],
       ['delivered_at', (o) => o.deliveredAt],
@@ -262,9 +263,9 @@ export class AdminService {
       ['wallet_id', (t) => t.walletId],
       ['order_id', (t) => t.orderId],
       ['type', (t) => t.type],
-      ['amount', (t) => t.amount],
-      ['commission', (t) => t.commission],
-      ['balance_after', (t) => t.balanceAfter],
+      ['amount', (t) => t.amount.toFixed(2)],
+      ['commission', (t) => t.commission.toFixed(2)],
+      ['balance_after', (t) => t.balanceAfter.toFixed(2)],
       ['status', (t) => t.status],
       ['payment_method', (t) => t.paymentMethod],
       ['description', (t) => t.description],

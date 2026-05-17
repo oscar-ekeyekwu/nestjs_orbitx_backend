@@ -44,10 +44,22 @@ export const ErrorCodes = {
 
   // Driver errors (DRIVER_xxx)
   DRIVER_001: 'DRIVER_NOT_FOUND',
-  DRIVER_002: 'DRIVER_NOT_VERIFIED',
+  // ARCH-3 invalid status transition (e.g. attempting active → pending_approval).
+  DRIVER_002: 'DRIVER_INVALID_STATUS_TRANSITION',
   DRIVER_003: 'DRIVER_OFFLINE',
   DRIVER_004: 'DRIVER_NOT_AVAILABLE',
   DRIVER_005: 'INSUFFICIENT_DRIVER_BALANCE',
+  DRIVER_006: 'DRIVER_NOT_VERIFIED',
+
+  // Vehicle errors (VEHICLE_xxx)
+  VEHICLE_001: 'VEHICLE_INVALID_STATUS_TRANSITION',
+
+  // Company errors (COMPANY_xxx)
+  COMPANY_001: 'COMPANY_INVALID_STATUS_TRANSITION',
+
+  // Service zone errors (ZONE_xxx)
+  // ARCH-5: caller is outside the configured Lagos service bbox.
+  ZONE_001: 'OUTSIDE_SERVICE_ZONE',
 
   // File upload errors (FILE_xxx)
   FILE_001: 'FILE_TOO_LARGE',
@@ -68,7 +80,12 @@ export const ErrorCodes = {
   SYS_002: 'DATABASE_ERROR',
   SYS_003: 'SERVICE_UNAVAILABLE',
   SYS_004: 'RATE_LIMIT_EXCEEDED',
-  SYS_005: 'CONFIGURATION_ERROR',
+  // ARCH-7: returned when the database refuses an UPDATE/DELETE against
+  // an append-only audit table (transactions, approval_decisions) because
+  // the orbit_app role lacks the privilege. If you see this in prod, the
+  // calling code attempted to mutate the audit ledger — fix the caller.
+  SYS_005: 'AUDIT_IMMUTABILITY_VIOLATION',
+  SYS_006: 'CONFIGURATION_ERROR',
 
   // Notification errors (NOTIF_xxx)
   NOTIF_001: 'NOTIFICATION_SEND_FAILED',

@@ -24,6 +24,9 @@ import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { NotificationsService } from '../notifications/notification.service';
 import { User } from '../users/entities/user.entity';
+import Decimal from 'decimal.js';
+import { Naira, naira } from '../common/money';
+import { haversineKm } from '../common/geo';
 
 @Injectable()
 export class OrdersService {
@@ -322,7 +325,7 @@ export class OrdersService {
         await this.walletService.processOrderPayment(
           order.driverId,
           order.id,
-          Number(order.finalPrice),
+          order.finalPrice,
           PaymentMethod.CASH,
         );
       }
@@ -456,7 +459,7 @@ export class OrdersService {
     deliveryLat: number,
     deliveryLng: number,
     packageSize: PackageSize,
-  ): Promise<number> {
+  ): Promise<Naira> {
     const distance = this.calculateDistance(
       pickupLat,
       pickupLng,
@@ -489,11 +492,14 @@ export class OrdersService {
       ),
     };
 
-    const distancePrice = distance * pricePerKm;
-    const totalPrice =
-      (basePrice + distancePrice) * sizeMultiplier[packageSize];
+    // Compute in Decimal to preserve kobo precision; round to the nearest
+    // naira (scale 0) for the customer-facing estimate.
+    const distancePrice = naira(String(distance)).times(pricePerKm);
+    const totalPrice = naira(String(basePrice))
+      .plus(distancePrice)
+      .times(sizeMultiplier[packageSize]);
 
-    return Math.round(totalPrice);
+    return totalPrice.toDecimalPlaces(0, Decimal.ROUND_HALF_UP) as Naira;
   }
 
   private calculateDistance(
@@ -502,20 +508,6 @@ export class OrdersService {
     lat2: number,
     lon2: number,
   ): number {
-    const R = 6371; // Earth's radius in km
-    const dLat = this.deg2rad(lat2 - lat1);
-    const dLon = this.deg2rad(lon2 - lon1);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.deg2rad(lat1)) *
-        Math.cos(this.deg2rad(lat2)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
-  private deg2rad(deg: number): number {
-    return deg * (Math.PI / 180);
+    return haversineKm(lat1, lon1, lat2, lon2);
   }
 }

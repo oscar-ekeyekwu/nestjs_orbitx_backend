@@ -19,6 +19,7 @@ import { WithdrawFundsDto } from './dto/withdraw-funds.dto';
 import { SystemConfigService } from '../config/config.service';
 import { ConfigKey } from '../config/enums/config-keys.enum';
 import { PaymentService } from '../payment/payment.service';
+import { Naira, NAIRA_ZERO, naira, nairaToJSON } from '../common/money';
 
 @Injectable()
 export class WalletService {
@@ -48,10 +49,10 @@ export class WalletService {
 
     const wallet = this.walletRepository.create({
       userId,
-      balance: 0,
-      totalEarnings: 0,
-      totalWithdrawals: 0,
-      pendingBalance: 0,
+      balance: NAIRA_ZERO,
+      totalEarnings: NAIRA_ZERO,
+      totalWithdrawals: NAIRA_ZERO,
+      pendingBalance: NAIRA_ZERO,
     });
 
     return this.walletRepository.save(wallet);
@@ -74,11 +75,11 @@ export class WalletService {
   }
 
   /**
-   * Get wallet balance
+   * Get wallet balance as the canonical Naira wire string `"x.xx"`.
    */
-  async getBalance(userId: string): Promise<number> {
+  async getBalance(userId: string): Promise<string> {
     const wallet = await this.getWalletByUserId(userId);
-    return Number(wallet.balance);
+    return wallet.balance.toFixed(2);
   }
 
   /**
@@ -91,7 +92,7 @@ export class WalletService {
       0,
     );
 
-    return Number(wallet.balance) >= minBalance;
+    return wallet.balance.greaterThanOrEqualTo(minBalance);
   }
 
   /**
@@ -119,17 +120,18 @@ export class WalletService {
         throw new ForbiddenException('Wallet is locked');
       }
 
-      const newBalance = Number(wallet.balance) + addFundsDto.amount;
+      const amount = naira(String(addFundsDto.amount));
+      const newBalance = wallet.balance.plus(amount) as Naira;
 
       wallet.balance = newBalance;
-      wallet.totalEarnings = Number(wallet.totalEarnings) + addFundsDto.amount;
+      wallet.totalEarnings = wallet.totalEarnings.plus(amount) as Naira;
 
       await queryRunner.manager.save(wallet);
 
       const transaction = queryRunner.manager.create(Transaction, {
         walletId: wallet.id,
         type: TransactionType.CREDIT,
-        amount: addFundsDto.amount,
+        amount,
         balanceAfter: newBalance,
         status: TransactionStatus.COMPLETED,
         paymentMethod: addFundsDto.paymentMethod,
@@ -175,22 +177,23 @@ export class WalletService {
         throw new ForbiddenException('Wallet is locked');
       }
 
-      if (Number(wallet.balance) < withdrawDto.amount) {
+      const amount = naira(String(withdrawDto.amount));
+
+      if (wallet.balance.lessThan(amount)) {
         throw new BadRequestException('Insufficient balance');
       }
 
-      const newBalance = Number(wallet.balance) - withdrawDto.amount;
+      const newBalance = wallet.balance.minus(amount) as Naira;
 
       wallet.balance = newBalance;
-      wallet.totalWithdrawals =
-        Number(wallet.totalWithdrawals) + withdrawDto.amount;
+      wallet.totalWithdrawals = wallet.totalWithdrawals.plus(amount) as Naira;
 
       await queryRunner.manager.save(wallet);
 
       const transaction = queryRunner.manager.create(Transaction, {
         walletId: wallet.id,
         type: TransactionType.DEBIT,
-        amount: withdrawDto.amount,
+        amount,
         balanceAfter: newBalance,
         status: TransactionStatus.COMPLETED,
         paymentMethod: PaymentMethod.BANK_TRANSFER,
@@ -217,7 +220,7 @@ export class WalletService {
   async processOrderPayment(
     userId: string,
     orderId: string,
-    amount: number,
+    amount: Naira | string | number,
     paymentMethod: PaymentMethod = PaymentMethod.CASH,
   ): Promise<Transaction> {
     const queryRunner = this.dataSource.createQueryRunner();
@@ -238,18 +241,22 @@ export class WalletService {
         throw new ForbiddenException('Wallet is locked');
       }
 
+      const orderAmount = naira(String(amount));
+
       // Calculate commission
       const commissionPercentage = await this.configService.getNumber(
         ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
         20,
       );
-      const commission = (amount * commissionPercentage) / 100;
-      const driverEarnings = amount - commission;
+      const commission = orderAmount
+        .times(commissionPercentage)
+        .dividedBy(100) as Naira;
+      const driverEarnings = orderAmount.minus(commission) as Naira;
 
-      const newBalance = Number(wallet.balance) + driverEarnings;
+      const newBalance = wallet.balance.plus(driverEarnings) as Naira;
 
       wallet.balance = newBalance;
-      wallet.totalEarnings = Number(wallet.totalEarnings) + driverEarnings;
+      wallet.totalEarnings = wallet.totalEarnings.plus(driverEarnings) as Naira;
 
       await queryRunner.manager.save(wallet);
 
@@ -264,8 +271,8 @@ export class WalletService {
         paymentMethod,
         description: `Payment for order ${orderId}`,
         metadata: {
-          orderAmount: amount,
-          commission,
+          orderAmount: orderAmount.toFixed(2),
+          commission: commission.toFixed(2),
           commissionPercentage,
         },
       });
@@ -375,13 +382,15 @@ export class WalletService {
         0,
       );
 
-      if (Number(wallet.balance) < minBalance) {
+      const minBalanceNaira = naira(String(minBalance));
+
+      if (wallet.balance.lessThan(minBalanceNaira)) {
         throw new BadRequestException(
           `Insufficient balance. Minimum balance of ₦${minBalance} required`,
         );
       }
 
-      const newBalance = Number(wallet.balance) - minBalance;
+      const newBalance = wallet.balance.minus(minBalanceNaira) as Naira;
       wallet.balance = newBalance;
 
       await queryRunner.manager.save(wallet);
@@ -390,7 +399,7 @@ export class WalletService {
         walletId: wallet.id,
         orderId,
         type: TransactionType.DEBIT,
-        amount: minBalance,
+        amount: minBalanceNaira,
         balanceAfter: newBalance,
         status: TransactionStatus.COMPLETED,
         paymentMethod: PaymentMethod.WALLET,
@@ -437,7 +446,8 @@ export class WalletService {
         0,
       );
 
-      const newBalance = Number(wallet.balance) + minBalance;
+      const refundAmount = naira(String(minBalance));
+      const newBalance = wallet.balance.plus(refundAmount) as Naira;
       wallet.balance = newBalance;
 
       await queryRunner.manager.save(wallet);
@@ -446,7 +456,7 @@ export class WalletService {
         walletId: wallet.id,
         orderId,
         type: TransactionType.CREDIT,
-        amount: minBalance,
+        amount: refundAmount,
         balanceAfter: newBalance,
         status: TransactionStatus.COMPLETED,
         paymentMethod: PaymentMethod.WALLET,
@@ -471,13 +481,13 @@ export class WalletService {
    * Get wallet statistics
    */
   async getWalletStats(userId: string): Promise<{
-    balance: number;
-    totalEarnings: number;
-    totalWithdrawals: number;
-    pendingBalance: number;
+    balance: string;
+    totalEarnings: string;
+    totalWithdrawals: string;
+    pendingBalance: string;
     totalTransactions: number;
     canTakeOrders: boolean;
-    minBalanceRequired: number;
+    minBalanceRequired: string;
   }> {
     const wallet = await this.getWalletByUserId(userId);
     const minBalance = await this.configService.getNumber(
@@ -489,13 +499,13 @@ export class WalletService {
     });
 
     return {
-      balance: Number(wallet.balance),
-      totalEarnings: Number(wallet.totalEarnings),
-      totalWithdrawals: Number(wallet.totalWithdrawals),
-      pendingBalance: Number(wallet.pendingBalance),
+      balance: nairaToJSON(wallet.balance) ?? '0.00',
+      totalEarnings: nairaToJSON(wallet.totalEarnings) ?? '0.00',
+      totalWithdrawals: nairaToJSON(wallet.totalWithdrawals) ?? '0.00',
+      pendingBalance: nairaToJSON(wallet.pendingBalance) ?? '0.00',
       totalTransactions,
-      canTakeOrders: Number(wallet.balance) >= minBalance,
-      minBalanceRequired: minBalance,
+      canTakeOrders: wallet.balance.greaterThanOrEqualTo(minBalance),
+      minBalanceRequired: naira(String(minBalance)).toFixed(2),
     };
   }
 

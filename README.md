@@ -50,12 +50,19 @@ $ npm run start:prod
 # unit tests
 $ npm run test
 
+# watch mode
+$ npm run test:watch
+
 # e2e tests
 $ npm run test:e2e
 
-# test coverage
+# test coverage (writes HTML report to ../coverage/index.html)
 $ npm run test:cov
 ```
+
+Coverage is collected from `src/**/*.ts` excluding `*.dto.ts`, `*.entity.ts`, `*.module.ts`, `*.spec.ts`, `main.ts`, and barrel `index.ts` files. Open `coverage/index.html` after running `test:cov` to view the report.
+
+**DoD policy (B0):** every feature PR that adds or changes a service/component must include unit tests covering the change. The PR template's "Tests added" checkbox is required.
 
 ## Deployment
 

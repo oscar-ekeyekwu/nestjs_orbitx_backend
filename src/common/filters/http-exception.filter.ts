@@ -27,6 +27,80 @@ interface ErrorResponseBody {
   errors?: unknown[];
 }
 
+// NFR-S5 / ARCH-7: tables whose UPDATE+DELETE privileges are revoked from
+// the orbit_app role at the database layer. Any 42501 (insufficient
+// privilege) Postgres error that mentions one of these tables is mapped
+// to SYS_005 so the API surface is unambiguous about what happened.
+const AUDIT_TABLES = ['approval_decisions', 'transactions'] as const;
+const PG_INSUFFICIENT_PRIVILEGE = '42501';
+
+interface PgDriverError {
+  code?: string;
+  table?: string;
+  message?: string;
+}
+
+// NFR-S3 / ARCH-6: PII patterns scrubbed from any message that leaves
+// the server in the response envelope. The console.error log inside
+// `catch()` still sees the original, so on-call diagnostics aren't
+// degraded. Patterns are intentionally permissive (false-positive bias)
+// rather than precise — the cost of redacting a harmless string is
+// always lower than leaking a real one.
+//
+// Add new patterns here ↓ and lower-case label-then-regex for clarity.
+const PII_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  // Email
+  {
+    label: 'email',
+    pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
+  },
+  // Nigerian phone in +234 form (e.g. +2348012345678).
+  { label: 'phone-intl', pattern: /\+234\d{10}/g },
+  // Nigerian phone in 0-prefix form (e.g. 08012345678) AND 11-digit
+  // NIN-shaped strings collide; both are scrubbed with one rule.
+  // The \b anchors avoid eating digits out of a longer numeric token.
+  { label: 'phone-local-or-nin', pattern: /\b\d{11}\b/g },
+  // Paystack transaction id surface (also covers `txn_…` references
+  // we mint internally).
+  { label: 'paystack-txn', pattern: /\btxn_[A-Za-z0-9]+/g },
+];
+
+const PII_REDACTION = '[REDACTED]';
+
+export function sanitize(msg: string): string {
+  let result = msg;
+  for (const { pattern } of PII_PATTERNS) {
+    result = result.replace(pattern, PII_REDACTION);
+  }
+  return result;
+}
+
+function sanitizeErrors(errors: unknown[] | undefined): unknown[] | undefined {
+  if (!errors) return undefined;
+  return errors.map((entry) =>
+    typeof entry === 'string' ? sanitize(entry) : entry,
+  );
+}
+
+function isAuditImmutabilityViolation(exception: unknown): boolean {
+  if (!exception || typeof exception !== 'object') return false;
+
+  const err = exception as {
+    driverError?: PgDriverError;
+    code?: string;
+    message?: string;
+    table?: string;
+  };
+  const code = err.driverError?.code ?? err.code;
+  if (code !== PG_INSUFFICIENT_PRIVILEGE) return false;
+
+  const table = err.driverError?.table ?? err.table ?? '';
+  const driverMessage = err.driverError?.message ?? '';
+  const haystack =
+    `${table} ${driverMessage} ${err.message ?? ''}`.toLowerCase();
+  return AUDIT_TABLES.some((t) => haystack.includes(t));
+}
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
@@ -39,7 +113,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let errorCode: ErrorCode = ErrorCodes.SYS_001;
     let errors: unknown[] | undefined;
 
-    if (exception instanceof HttpException) {
+    if (isAuditImmutabilityViolation(exception)) {
+      status = HttpStatus.FORBIDDEN;
+      errorCode = ErrorCodes.SYS_005;
+      message =
+        'Audit table is append-only at the database layer. UPDATE / DELETE on transactions and approval_decisions is denied to the application role.';
+    } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const res = exception.getResponse();
 
@@ -84,7 +163,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message = exception.message;
     }
 
-    // Log error for debugging
+    // Server-side log keeps the **original** message so on-call can see
+    // what actually happened. Sanitization runs only on the outbound
+    // envelope below (NFR-S3).
     console.error('Exception caught:', {
       message,
       errorCode,
@@ -97,15 +178,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const errorResponse: ErrorResponseBody = {
       success: false,
       errorCode,
-      message,
+      message: sanitize(message),
       statusCode: status,
       path: request.url,
       timestamp: new Date().toISOString(),
     };
 
-    // Include validation errors if present
-    if (errors) {
-      errorResponse.errors = errors;
+    const sanitizedErrors = sanitizeErrors(errors);
+    if (sanitizedErrors) {
+      errorResponse.errors = sanitizedErrors;
     }
 
     response.status(status).json(errorResponse);

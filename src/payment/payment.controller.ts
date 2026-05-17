@@ -9,6 +9,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { PaymentService } from './payment.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -27,6 +28,12 @@ export class PaymentController {
 
   @Post('webhook/paystack')
   @HttpCode(HttpStatus.OK)
+  // NFR-S6 / ARCH-11: Paystack can legitimately burst webhook callbacks
+  // (one per transaction during high-volume periods, plus retries on
+  // delivery failure). Raise the ceiling well above the global 100/min
+  // so we never 429 a real callback; the signature check below is the
+  // real abuse guard, not the throttler.
+  @Throttle({ default: { ttl: 60_000, limit: 1000 } })
   @ApiOperation({ summary: 'Paystack webhook handler (no auth required)' })
   async paystackWebhook(
     @Req() req: Request & { rawBody?: Buffer },

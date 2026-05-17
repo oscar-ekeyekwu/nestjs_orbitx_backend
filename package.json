@@ -24,7 +24,9 @@
     "migration:revert": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:revert -d ./ormconfig.ts",
     "migration:revert:prod": "node ./node_modules/typeorm/cli.js migration:revert -d ./dist/ormconfig.js",
     "seed:admin": "ts-node -r tsconfig-paths/register src/database/seeds/admin.seed.ts",
-    "seed:admin:prod": "node dist/src/database/seeds/admin.seed.js"
+    "seed:admin:prod": "node dist/src/database/seeds/admin.seed.js",
+    "seed:v1": "ts-node -r tsconfig-paths/register src/database/seeds/seed-v1.ts",
+    "seed:v1:prod": "node dist/src/database/seeds/seed-v1.js"
   },
   "dependencies": {
     "@nestjs-modules/mailer": "^2.0.2",
@@ -43,9 +45,10 @@
     "@nestjs/websockets": "^11.1.6",
     "@sendgrid/mail": "^8.1.6",
     "bcrypt": "^6.0.0",
-    "dotenv": "^16.4.5",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
+    "decimal.js": "^10.6.0",
+    "dotenv": "^16.4.5",
     "firebase-admin": "^13.6.0",
     "handlebars": "^4.7.8",
     "multer": "^2.0.2",
@@ -59,13 +62,13 @@
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.1",
     "swagger-ui-express": "^5.0.1",
-    "twilio": "^5.10.2",
-    "typeorm": "^0.3.28",
-    "typeorm-cli": "^1.0.7",
+    "ts-jest": "^29.2.5",
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "ts-jest": "^29.2.5"
+    "twilio": "^5.10.2",
+    "typeorm": "^0.3.28",
+    "typeorm-cli": "^1.0.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -106,9 +109,21 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.ts",
+      "!**/*.dto.ts",
+      "!**/*.entity.ts",
+      "!**/*.module.ts",
+      "!**/*.spec.ts",
+      "!**/index.ts",
+      "!main.ts"
     ],
     "coverageDirectory": "../coverage",
+    "coverageReporters": [
+      "text",
+      "text-summary",
+      "html",
+      "lcov"
+    ],
     "testEnvironment": "node"
   }
 }

@@ -8,7 +8,8 @@ import {
 } from 'typeorm';
 import { Wallet } from './wallet.entity';
 import { Order } from '../../orders/entities/order.entity';
-import { numericTransformer } from '../../common/utils/decimal-transformer';
+import type { Naira } from '../../common/money';
+import { nairaTransformer } from '../../common/money';
 
 export enum TransactionType {
   CREDIT = 'credit',
@@ -57,24 +58,24 @@ export class Transaction {
   @Column('decimal', {
     precision: 12,
     scale: 2,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  amount: number;
+  amount: Naira;
 
   @Column('decimal', {
     precision: 12,
     scale: 2,
     default: 0,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  commission: number;
+  commission: Naira;
 
   @Column('decimal', {
     precision: 12,
     scale: 2,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  balanceAfter: number;
+  balanceAfter: Naira;
 
   @Column({
     type: 'enum',
