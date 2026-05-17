@@ -10,7 +10,8 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Transaction } from './transaction.entity';
-import { numericTransformer } from '../../common/utils/decimal-transformer';
+import type { Naira } from '../../common/money';
+import { nairaTransformer } from '../../common/money';
 
 @Entity('wallets')
 export class Wallet {
@@ -28,33 +29,33 @@ export class Wallet {
     precision: 12,
     scale: 2,
     default: 0,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  balance: number;
+  balance: Naira;
 
   @Column('decimal', {
     precision: 12,
     scale: 2,
     default: 0,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  totalEarnings: number;
+  totalEarnings: Naira;
 
   @Column('decimal', {
     precision: 12,
     scale: 2,
     default: 0,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  totalWithdrawals: number;
+  totalWithdrawals: Naira;
 
   @Column('decimal', {
     precision: 12,
     scale: 2,
     default: 0,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  pendingBalance: number;
+  pendingBalance: Naira;
 
   @Column({ default: false })
   isLocked: boolean;

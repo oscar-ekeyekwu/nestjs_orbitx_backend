@@ -24,6 +24,8 @@ import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { NotificationsService } from '../notifications/notification.service';
 import { User } from '../users/entities/user.entity';
+import Decimal from 'decimal.js';
+import { Naira, naira } from '../common/money';
 
 @Injectable()
 export class OrdersService {
@@ -322,7 +324,7 @@ export class OrdersService {
         await this.walletService.processOrderPayment(
           order.driverId,
           order.id,
-          Number(order.finalPrice),
+          order.finalPrice,
           PaymentMethod.CASH,
         );
       }
@@ -456,7 +458,7 @@ export class OrdersService {
     deliveryLat: number,
     deliveryLng: number,
     packageSize: PackageSize,
-  ): Promise<number> {
+  ): Promise<Naira> {
     const distance = this.calculateDistance(
       pickupLat,
       pickupLng,
@@ -489,11 +491,14 @@ export class OrdersService {
       ),
     };
 
-    const distancePrice = distance * pricePerKm;
-    const totalPrice =
-      (basePrice + distancePrice) * sizeMultiplier[packageSize];
+    // Compute in Decimal to preserve kobo precision; round to the nearest
+    // naira (scale 0) for the customer-facing estimate.
+    const distancePrice = naira(String(distance)).times(pricePerKm);
+    const totalPrice = naira(String(basePrice))
+      .plus(distancePrice)
+      .times(sizeMultiplier[packageSize]);
 
-    return Math.round(totalPrice);
+    return totalPrice.toDecimalPlaces(0, Decimal.ROUND_HALF_UP) as Naira;
   }
 
   private calculateDistance(

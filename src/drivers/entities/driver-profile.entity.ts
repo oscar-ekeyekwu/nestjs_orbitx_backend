@@ -8,6 +8,8 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import type { Naira } from '../../common/money';
+import { nairaTransformer } from '../../common/money';
 
 @Entity('driver_profiles')
 export class DriverProfile {
@@ -51,8 +53,13 @@ export class DriverProfile {
   @Column({ default: 0 })
   totalRatings: number;
 
-  @Column('decimal', { precision: 12, scale: 2, default: 0 })
-  totalEarnings: number;
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: nairaTransformer,
+  })
+  totalEarnings: Naira;
 
   @Column({ default: true })
   isVerified: boolean;

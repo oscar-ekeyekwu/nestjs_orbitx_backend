@@ -4,6 +4,7 @@ import { EntityManager, Repository } from 'typeorm';
 import { DriverProfile } from './entities/driver-profile.entity';
 import { UserRole } from '../common/enums/user-role.enum';
 import { UsersService } from '../users/users.service';
+import { Naira, naira } from '../common/money';
 
 @Injectable()
 export class DriversService {
@@ -109,7 +110,8 @@ export class DriversService {
       throw new NotFoundException('Driver profile not found');
     }
 
-    profile.totalEarnings = Number(profile.totalEarnings) + amount;
+    const delta = naira(String(amount));
+    profile.totalEarnings = profile.totalEarnings.plus(delta) as Naira;
     return this.driverProfileRepository.save(profile);
   }
 
@@ -138,7 +140,7 @@ export class DriversService {
       totalDeliveries: profile.totalDeliveries,
       rating: Number(profile.rating).toFixed(1),
       totalRatings: profile.totalRatings,
-      totalEarnings: Number(profile.totalEarnings),
+      totalEarnings: profile.totalEarnings.toFixed(2),
       isOnline: profile.isOnline,
       isOnDelivery: profile.isOnDelivery,
     };

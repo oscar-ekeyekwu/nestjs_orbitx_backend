@@ -8,7 +8,8 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
-import { numericTransformer } from '../../common/utils/decimal-transformer';
+import type { Naira } from '../../common/money';
+import { nairaTransformer } from '../../common/money';
 
 export enum OrderStatus {
   PENDING = 'pending',
@@ -95,23 +96,23 @@ export class Order {
   @Column({ type: 'text', nullable: true })
   deliveryNotes: string;
 
-  // Pricing — numericTransformer normalizes pg's string return to a real
-  // JS number so arithmetic and JSON serialization both behave correctly.
-  // Float drift is still possible; full Decimal correctness is a known gap.
+  // Pricing — branded Naira (decimal.js) via nairaTransformer (ARCH-1).
+  // Wire format is "\d+\.\d{2}" string; arithmetic must go through
+  // .plus/.minus/.times/.dividedBy (number arithmetic is a compile error).
   @Column('decimal', {
     precision: 10,
     scale: 2,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  estimatedPrice: number;
+  estimatedPrice: Naira;
 
   @Column('decimal', {
     precision: 10,
     scale: 2,
     nullable: true,
-    transformer: numericTransformer,
+    transformer: nairaTransformer,
   })
-  finalPrice: number;
+  finalPrice: Naira | null;
 
   // Timestamps
   @Column({ type: 'timestamp', nullable: true })
