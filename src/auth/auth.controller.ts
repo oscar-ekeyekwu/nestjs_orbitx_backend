@@ -43,7 +43,10 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('register')
-  @Throttle({ default: { ttl: 60000, limit: 3 } }) // 3 registrations per minute
+  // NFR-S6 / ARCH-11: 10 registrations per hour per IP. Caps script-driven
+  // account creation hard while staying generous enough for a real user
+  // who needs a second attempt after fixing a validation error.
+  @Throttle({ default: { ttl: 3_600_000, limit: 10 } })
   @ApiOperation({ summary: 'Register a new user' })
   async register(
     @Body() registerDto: RegisterDto,
@@ -54,7 +57,8 @@ export class AuthController {
   }
 
   @Post('login')
-  @Throttle({ default: { ttl: 60000, limit: 5 } }) // 5 login attempts per minute
+  // NFR-S6 / ARCH-11: 5 attempts per minute per IP — brute-force guard.
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   @ApiOperation({ summary: 'Login user' })
   async login(
     @Body() loginDto: LoginDto,
@@ -65,7 +69,10 @@ export class AuthController {
   }
 
   @Post('refresh')
-  @Throttle({ default: { ttl: 60000, limit: 10 } }) // 10 refresh attempts per minute
+  // NFR-S6 / ARCH-11: 30 refresh attempts per minute. Mobile clients can
+  // legitimately burst on app-resume across many devices; tighter than
+  // the global 100/min but not punishing.
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
   @ApiOperation({ summary: 'Refresh access token' })
   async refresh(
     @Body() refreshTokenDto: RefreshTokenDto,
