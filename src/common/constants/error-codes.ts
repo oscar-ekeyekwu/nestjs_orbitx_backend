@@ -57,6 +57,10 @@ export const ErrorCodes = {
   // Company errors (COMPANY_xxx)
   COMPANY_001: 'COMPANY_INVALID_STATUS_TRANSITION',
 
+  // Service zone errors (ZONE_xxx)
+  // ARCH-5: caller is outside the configured Lagos service bbox.
+  ZONE_001: 'OUTSIDE_SERVICE_ZONE',
+
   // File upload errors (FILE_xxx)
   FILE_001: 'FILE_TOO_LARGE',
   FILE_002: 'INVALID_FILE_TYPE',

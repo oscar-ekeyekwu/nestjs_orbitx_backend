@@ -19,6 +19,9 @@ export enum ConfigKey {
 
   // Feature Flags
   USE_MAP_VIEW = 'USE_MAP_VIEW',
+
+  // Service Zone (ARCH-5)
+  LAGOS_SERVICE_BBOX = 'LAGOS_SERVICE_BBOX',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -86,5 +89,16 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'When true, customer order tracking screen renders the Google Map view. When false, renders the timeline-only fallback.',
     dataType: 'boolean',
+  },
+  [ConfigKey.LAGOS_SERVICE_BBOX]: {
+    value: JSON.stringify({
+      latMin: 6.35,
+      latMax: 6.7,
+      lngMin: 3.1,
+      lngMax: 3.55,
+    }),
+    description:
+      'Inclusive lat/lng bounding box for the Lagos service zone. Drivers cannot go online and orders cannot be created outside this region. Admin-tunable without redeploy; v1.1 swaps this for a PostGIS service_zones polygon at the same callsites.',
+    dataType: 'json',
   },
 };
