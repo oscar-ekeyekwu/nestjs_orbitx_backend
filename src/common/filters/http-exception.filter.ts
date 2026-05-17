@@ -40,6 +40,48 @@ interface PgDriverError {
   message?: string;
 }
 
+// NFR-S3 / ARCH-6: PII patterns scrubbed from any message that leaves
+// the server in the response envelope. The console.error log inside
+// `catch()` still sees the original, so on-call diagnostics aren't
+// degraded. Patterns are intentionally permissive (false-positive bias)
+// rather than precise — the cost of redacting a harmless string is
+// always lower than leaking a real one.
+//
+// Add new patterns here ↓ and lower-case label-then-regex for clarity.
+const PII_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  // Email
+  {
+    label: 'email',
+    pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
+  },
+  // Nigerian phone in +234 form (e.g. +2348012345678).
+  { label: 'phone-intl', pattern: /\+234\d{10}/g },
+  // Nigerian phone in 0-prefix form (e.g. 08012345678) AND 11-digit
+  // NIN-shaped strings collide; both are scrubbed with one rule.
+  // The \b anchors avoid eating digits out of a longer numeric token.
+  { label: 'phone-local-or-nin', pattern: /\b\d{11}\b/g },
+  // Paystack transaction id surface (also covers `txn_…` references
+  // we mint internally).
+  { label: 'paystack-txn', pattern: /\btxn_[A-Za-z0-9]+/g },
+];
+
+const PII_REDACTION = '[REDACTED]';
+
+export function sanitize(msg: string): string {
+  let result = msg;
+  for (const { pattern } of PII_PATTERNS) {
+    result = result.replace(pattern, PII_REDACTION);
+  }
+  return result;
+}
+
+function sanitizeErrors(errors: unknown[] | undefined): unknown[] | undefined {
+  if (!errors) return undefined;
+  return errors.map((entry) =>
+    typeof entry === 'string' ? sanitize(entry) : entry,
+  );
+}
+
 function isAuditImmutabilityViolation(exception: unknown): boolean {
   if (!exception || typeof exception !== 'object') return false;
 
@@ -121,7 +163,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message = exception.message;
     }
 
-    // Log error for debugging
+    // Server-side log keeps the **original** message so on-call can see
+    // what actually happened. Sanitization runs only on the outbound
+    // envelope below (NFR-S3).
     console.error('Exception caught:', {
       message,
       errorCode,
@@ -134,15 +178,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const errorResponse: ErrorResponseBody = {
       success: false,
       errorCode,
-      message,
+      message: sanitize(message),
       statusCode: status,
       path: request.url,
       timestamp: new Date().toISOString(),
     };
 
-    // Include validation errors if present
-    if (errors) {
-      errorResponse.errors = errors;
+    const sanitizedErrors = sanitizeErrors(errors);
+    if (sanitizedErrors) {
+      errorResponse.errors = sanitizedErrors;
     }
 
     response.status(status).json(errorResponse);

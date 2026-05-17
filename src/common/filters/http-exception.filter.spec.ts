@@ -1,5 +1,5 @@
 import { ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
-import { AllExceptionsFilter } from './http-exception.filter';
+import { AllExceptionsFilter, sanitize } from './http-exception.filter';
 import { ErrorCodes } from '../constants/error-codes';
 
 interface MockResponse {
@@ -150,6 +150,109 @@ describe('AllExceptionsFilter', () => {
       expect(body.errorCode).toBe(ErrorCodes.SYS_001);
       expect(response.statusValue).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
       expect(body.message).toBe('boom');
+    });
+  });
+
+  describe('PII sanitizer (ARCH-6, NFR-S3)', () => {
+    describe('sanitize() — pattern coverage', () => {
+      it('redacts email addresses', () => {
+        expect(sanitize('User oscar@gemspaysolution.com not found')).toBe(
+          'User [REDACTED] not found',
+        );
+      });
+
+      it('redacts Nigerian +234 phone numbers', () => {
+        expect(sanitize('OTP sent to +2348012345678')).toBe(
+          'OTP sent to [REDACTED]',
+        );
+      });
+
+      it('redacts Nigerian 0-prefix phone numbers / 11-digit NINs', () => {
+        expect(sanitize('OTP sent to 08012345678')).toBe(
+          'OTP sent to [REDACTED]',
+        );
+        expect(sanitize('NIN 12345678901 is invalid')).toBe(
+          'NIN [REDACTED] is invalid',
+        );
+      });
+
+      it('redacts Paystack txn ids', () => {
+        expect(sanitize('Failed to refund txn_abc123XYZ')).toBe(
+          'Failed to refund [REDACTED]',
+        );
+      });
+
+      it('redacts multiple PII tokens in one message', () => {
+        const dirty =
+          'Customer oscar@example.com (phone +2348012345678) tried txn_abcd';
+        expect(sanitize(dirty)).toBe(
+          'Customer [REDACTED] (phone [REDACTED]) tried [REDACTED]',
+        );
+      });
+
+      it('leaves non-PII strings untouched', () => {
+        expect(sanitize('Order ORD-2026-05-17-001 delivered')).toBe(
+          'Order ORD-2026-05-17-001 delivered',
+        );
+      });
+    });
+
+    describe('filter wiring', () => {
+      it('redacts message in the response envelope but keeps the original in console.error', () => {
+        const { host, response } = buildHost({
+          url: '/api/v1/users',
+          method: 'POST',
+        });
+        const original =
+          'Email oscar@example.com already exists for +2348012345678';
+
+        filter.catch(new HttpException(original, HttpStatus.CONFLICT), host);
+
+        const body = response.jsonPayload as Record<string, unknown>;
+        expect(body.message).toBe(
+          'Email [REDACTED] already exists for [REDACTED]',
+        );
+
+        // The server-side log should still receive the unredacted text
+        // so on-call can correlate with actual rows.
+        const calls = consoleError.mock.calls as unknown as unknown[][];
+        const loggedPayload = calls[0][1] as { message: string };
+        expect(loggedPayload.message).toBe(original);
+      });
+
+      it('redacts string entries inside errors[] from a validation 400', () => {
+        const { host, response } = buildHost({
+          url: '/api/v1/users',
+          method: 'POST',
+        });
+
+        filter.catch(
+          new HttpException(
+            {
+              message: 'Validation failed',
+              errors: [
+                'email oscar@example.com must be unique',
+                { field: 'phone', value: '+2348012345678', code: 'duplicate' },
+              ],
+            },
+            HttpStatus.BAD_REQUEST,
+          ),
+          host,
+        );
+
+        const body = response.jsonPayload as {
+          errors: unknown[];
+        };
+        // String entry: sanitized in place.
+        expect(body.errors[0]).toBe('email [REDACTED] must be unique');
+        // Object entry: pass-through (deep object scrubbing is a future
+        // story; flagging here keeps the test honest).
+        expect(body.errors[1]).toEqual({
+          field: 'phone',
+          value: '+2348012345678',
+          code: 'duplicate',
+        });
+      });
     });
   });
 });
