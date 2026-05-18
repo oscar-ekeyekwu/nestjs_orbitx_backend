@@ -1,4 +1,5 @@
-/* eslint-disable @typescript-eslint/unbound-method --
+/* eslint-disable @typescript-eslint/unbound-method,
+                  @typescript-eslint/no-unsafe-member-access --
  * jest's mock introspection (.mock.calls[N][M], passing repo method
  * references to expect().toHaveBeenCalled()) trips these rules. Both
  * are noisy false-positives in spec code. */
@@ -391,6 +392,105 @@ describe('VehiclesService (B3)', () => {
       expect(response.errorCode).toBe(ErrorCodes.VEHICLE_001);
       expect(txManager.save).not.toHaveBeenCalled();
       expect(txManager.insert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findAllForUser (B6 caller-aware listing)', () => {
+    const admin: User = {
+      id: 'admin-1',
+      email: 'admin@orbitx.com',
+      role: UserRole.ADMIN,
+    } as unknown as User;
+
+    it('admin path delegates to the unscoped query (no profile lookup)', async () => {
+      (vehicleRepo.findAndCount as jest.Mock).mockResolvedValue([
+        [buildVehicle({})],
+        1,
+      ]);
+      const result = await service.findAllForUser(admin, {
+        status: VehicleStatus.APPROVED,
+      });
+      expect(result.total).toBe(1);
+      expect(driverProfileRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('returns empty when the non-admin caller has no driver profile', async () => {
+      (driverProfileRepo.findOne as jest.Mock).mockResolvedValue(null);
+      const result = await service.findAllForUser(buildUser({}));
+      expect(result).toEqual({ items: [], total: 0 });
+      expect(vehicleRepo.findAndCount).not.toHaveBeenCalled();
+    });
+
+    it('individual driver sees both their own and (no) company vehicles', async () => {
+      (driverProfileRepo.findOne as jest.Mock).mockResolvedValue({
+        id: 'profile-1',
+        userId: 'user-1',
+        companyId: null,
+      });
+      (vehicleRepo.findAndCount as jest.Mock).mockResolvedValue([[], 0]);
+
+      await service.findAllForUser(buildUser({}));
+
+      const arg = (vehicleRepo.findAndCount as jest.Mock).mock.calls[0][0] as {
+        where: unknown[];
+      };
+      expect(arg.where).toEqual([
+        {
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+        },
+      ]);
+    });
+
+    it('company-linked driver sees individual + company-owned vehicles', async () => {
+      (driverProfileRepo.findOne as jest.Mock).mockResolvedValue({
+        id: 'profile-1',
+        userId: 'user-1',
+        companyId: 'company-9',
+      });
+      (vehicleRepo.findAndCount as jest.Mock).mockResolvedValue([[], 0]);
+
+      await service.findAllForUser(buildUser({}));
+
+      const arg = (vehicleRepo.findAndCount as jest.Mock).mock.calls[0][0] as {
+        where: unknown[];
+      };
+      expect(arg.where).toEqual([
+        {
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+        },
+        { ownerType: VehicleOwnerType.COMPANY, ownerId: 'company-9' },
+      ]);
+    });
+
+    it('status filter is applied to each ownership bucket', async () => {
+      (driverProfileRepo.findOne as jest.Mock).mockResolvedValue({
+        id: 'profile-1',
+        userId: 'user-1',
+        companyId: 'company-9',
+      });
+      (vehicleRepo.findAndCount as jest.Mock).mockResolvedValue([[], 0]);
+
+      await service.findAllForUser(buildUser({}), {
+        status: VehicleStatus.APPROVED,
+      });
+
+      const arg = (vehicleRepo.findAndCount as jest.Mock).mock.calls[0][0] as {
+        where: unknown[];
+      };
+      expect(arg.where).toEqual([
+        {
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+          status: VehicleStatus.APPROVED,
+        },
+        {
+          ownerType: VehicleOwnerType.COMPANY,
+          ownerId: 'company-9',
+          status: VehicleStatus.APPROVED,
+        },
+      ]);
     });
   });
 

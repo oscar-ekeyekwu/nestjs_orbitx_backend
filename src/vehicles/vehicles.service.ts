@@ -176,7 +176,7 @@ export class VehiclesService {
     return vehicle;
   }
 
-  /** Admin-only paginated listing. */
+  /** Admin-only unscoped listing. Used by the admin console (H4). */
   async findAll(opts?: {
     status?: VehicleStatus;
     limit?: number;
@@ -186,6 +186,61 @@ export class VehiclesService {
     const offset = opts?.offset ?? 0;
     const [items, total] = await this.vehicleRepo.findAndCount({
       where: opts?.status ? { status: opts.status } : undefined,
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+    return { items, total };
+  }
+
+  /**
+   * Caller-aware listing. Admins see everything (delegates to findAll);
+   * non-admin users see only vehicles their driver_profile owns:
+   *   - individual drivers:   ownerType=INDIVIDUAL_DRIVER + ownerId=profile.id
+   *   - company-linked users: ownerType=COMPANY            + ownerId=profile.companyId
+   * Returns `{ items: [], total: 0 }` if the caller has no driver
+   * profile yet — better than throwing while the user is still
+   * onboarding.
+   */
+  async findAllForUser(
+    caller: User,
+    opts?: { status?: VehicleStatus; limit?: number; offset?: number },
+  ): Promise<{ items: Vehicle[]; total: number }> {
+    if (caller.role === UserRole.ADMIN) {
+      return this.findAll(opts);
+    }
+
+    const profile = await this.driverProfileRepo.findOne({
+      where: { userId: caller.id },
+    });
+    if (!profile) {
+      return { items: [], total: 0 };
+    }
+
+    const limit = opts?.limit ?? 50;
+    const offset = opts?.offset ?? 0;
+
+    // Build the ownership filter: company-linked users see their
+    // company's vehicles; individual drivers see their own. A driver
+    // who's both an individual AND in a company keeps both buckets.
+    const ownershipWhere: Array<Record<string, unknown>> = [];
+    ownershipWhere.push({
+      ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+      ownerId: profile.id,
+    });
+    if (profile.companyId) {
+      ownershipWhere.push({
+        ownerType: VehicleOwnerType.COMPANY,
+        ownerId: profile.companyId,
+      });
+    }
+
+    const where = opts?.status
+      ? ownershipWhere.map((w) => ({ ...w, status: opts.status }))
+      : ownershipWhere;
+
+    const [items, total] = await this.vehicleRepo.findAndCount({
+      where,
       order: { createdAt: 'DESC' },
       take: limit,
       skip: offset,

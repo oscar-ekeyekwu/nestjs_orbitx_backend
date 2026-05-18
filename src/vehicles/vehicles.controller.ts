@@ -48,18 +48,20 @@ export class VehiclesController {
   }
 
   @Get()
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'List vehicles (admin only).' })
+  @ApiOperation({
+    summary:
+      'List vehicles. Admins see all; non-admin users see only vehicles their driver_profile owns (individual + their company).',
+  })
   @ApiQuery({ name: 'status', required: false, enum: VehicleStatus })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'offset', required: false, type: Number })
   async list(
+    @CurrentUser() user: User,
     @Query('status') status?: VehicleStatus,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
     @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
   ) {
-    const result = await this.vehiclesService.findAll({
+    const result = await this.vehiclesService.findAllForUser(user, {
       status,
       limit,
       offset,
