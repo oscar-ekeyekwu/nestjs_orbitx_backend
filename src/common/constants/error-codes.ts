@@ -46,7 +46,10 @@ export const ErrorCodes = {
   DRIVER_001: 'DRIVER_NOT_FOUND',
   // ARCH-3 invalid status transition (e.g. attempting active → pending_approval).
   DRIVER_002: 'DRIVER_INVALID_STATUS_TRANSITION',
-  DRIVER_003: 'DRIVER_OFFLINE',
+  // B5: caller tried to go online without an active assignment to an
+  // approved vehicle. Surface message: "Your assigned vehicle is not
+  // currently approved." (The old DRIVER_OFFLINE label was unused.)
+  DRIVER_003: 'VEHICLE_NOT_APPROVED',
   DRIVER_004: 'DRIVER_NOT_AVAILABLE',
   DRIVER_005: 'INSUFFICIENT_DRIVER_BALANCE',
   DRIVER_006: 'DRIVER_NOT_VERIFIED',
