@@ -5,11 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import {
   Document,
   DocumentOwnerType,
   DocumentStatus,
+  DocumentType,
 } from './entities/document.entity';
 import {
   SpacesStorageService,
@@ -17,12 +18,15 @@ import {
 } from './spaces-storage.service';
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
+import { ListDocumentsDto } from './dto/list-documents.dto';
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
   isAllowedDocumentMimeType,
+  requiresExpiry,
 } from './documents.constants';
 import { ErrorCodes } from '../common/constants/error-codes';
 import { UserRole } from '../common/enums/user-role.enum';
+import { loadOwner, type OwnerType } from '../common/polymorphic';
 import type { User } from '../users/entities/user.entity';
 
 @Injectable()
@@ -31,6 +35,7 @@ export class DocumentsService {
     @InjectRepository(Document)
     private readonly documentRepo: Repository<Document>,
     private readonly storage: SpacesStorageService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -51,12 +56,20 @@ export class DocumentsService {
   }
 
   /**
-   * C1 — persist the Document metadata row after the client confirms
-   * the PUT succeeded. The backend HEADs Spaces to verify the bytes
-   * actually landed before writing the row (FILE_002 on miss), so a
-   * stale or aborted upload never creates an orphan record.
+   * C1 + C2 — persist the Document metadata row after the client
+   * confirms the PUT succeeded.
    *
-   * Status is always seeded as PENDING — admin approval lives in C5.
+   *   - C1: HEAD Spaces to verify the bytes actually landed before
+   *     writing the row (FILE_002 on miss).
+   *   - C2: validate expiry-required types (DOCUMENT_001 on missing
+   *     expiry) and polymorphic owner ref (DOCUMENT_002 on missing
+   *     owner).
+   *
+   * Multi-version doc history (C2 AC): re-uploading the same docType
+   * for the same owner simply inserts a new row at status='pending'.
+   * The prior approved row stays untouched — no UPDATE, no DELETE.
+   * Admin queries should ORDER BY createdAt DESC to surface the
+   * latest version per (ownerType, ownerId, type) tuple.
    */
   async createDocument(
     dto: CreateDocumentDto,
@@ -67,6 +80,15 @@ export class DocumentsService {
     }
 
     this.assertObjectKeyMatchesOwner(dto);
+
+    if (requiresExpiry(dto.docType) && !dto.expiryDate) {
+      throw new BadRequestException({
+        message: `Document type "${dto.docType}" requires an expiryDate.`,
+        errorCode: ErrorCodes.DOCUMENT_001,
+      });
+    }
+
+    await this.assertOwnerExists(dto.ownerType, dto.ownerId);
 
     const exists = await this.storage.objectExists(dto.fileKey);
     if (!exists) {
@@ -86,8 +108,60 @@ export class DocumentsService {
       expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
       status: DocumentStatus.PENDING,
       uploadedBy: caller.id,
+      reviewedAt: null,
+      reviewedBy: null,
+      rejectionReason: null,
     });
     return this.documentRepo.save(doc);
+  }
+
+  /**
+   * C2 — list documents with optional filters.
+   *
+   * Admin can list across all owners. Non-admin callers have the
+   * (ownerType=user, ownerId=caller.id) filter forced regardless of
+   * what they pass in — a driver cannot list another user's docs even
+   * by spoofing the query string.
+   */
+  async listDocuments(
+    filters: ListDocumentsDto,
+    caller: User,
+  ): Promise<Document[]> {
+    const where: Record<string, unknown> = {};
+
+    if (caller.role === UserRole.ADMIN) {
+      if (filters.ownerType) where.ownerType = filters.ownerType;
+      if (filters.ownerId) where.ownerId = filters.ownerId;
+    } else {
+      // Force non-admin lookups to caller.id under owner=user. Any
+      // attempt to pass a different ownerType / ownerId is ignored
+      // rather than rejected to keep the surface simple.
+      where.ownerType = DocumentOwnerType.USER;
+      where.ownerId = caller.id;
+    }
+
+    if (filters.type) where.type = filters.type;
+    if (filters.status) where.status = filters.status;
+
+    return this.documentRepo.find({
+      where,
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * C2 — fetch a single document. Admin sees any; non-admin only sees
+   * documents they own (ownerType=user, ownerId=caller.id).
+   */
+  async findOne(id: string, caller: User): Promise<Document> {
+    const doc = await this.documentRepo.findOne({ where: { id } });
+    if (!doc) {
+      throw new NotFoundException(`Document ${id} not found`);
+    }
+    if (caller.role !== UserRole.ADMIN) {
+      this.assertOwnerMatchesCaller(doc.ownerType, doc.ownerId, caller);
+    }
+    return doc;
   }
 
   /**
@@ -143,6 +217,30 @@ export class DocumentsService {
     }
   }
 
+  /**
+   * C2 — verify the (ownerType, ownerId) pair actually resolves to a
+   * row. Uses the polymorphic loader (ARCH-4) so adding a new owner
+   * type only needs OwnerType + the switch updated.
+   */
+  private async assertOwnerExists(
+    ownerType: DocumentOwnerType,
+    ownerId: string,
+  ): Promise<void> {
+    // DocumentOwnerType ⊂ OwnerType — the cast is safe because the
+    // enum values match the union literals.
+    const owner = await loadOwner(
+      this.dataSource.manager,
+      ownerType as unknown as OwnerType,
+      ownerId,
+    );
+    if (!owner) {
+      throw new BadRequestException({
+        message: `No ${ownerType} found with id ${ownerId}.`,
+        errorCode: ErrorCodes.DOCUMENT_002,
+      });
+    }
+  }
+
   private assertOwnerMatchesCaller(
     ownerType: DocumentOwnerType,
     ownerId: string,
@@ -156,11 +254,15 @@ export class DocumentsService {
       }
       return;
     }
-    // Vehicle + company ownership checks land in C2 (requires the
-    // polymorphic-owner loader). Until then, only admins can act on
-    // those — keeps the surface safe by default.
+    // Vehicle + company ownership uses richer relationships:
+    //   - vehicle docs need an active assignment (driver) or company
+    //     membership (company-owned vehicle)
+    //   - company docs need an approved membership
+    // Both lookups land alongside D2 / D3 / D4 (setup wizards + invite
+    // flow). Until those wire up the relationship checks, only admins
+    // can act on vehicle / company docs — safe default.
     throw new ForbiddenException(
-      `Owner check for ownerType=${ownerType} is admin-only until C2 lands the full Documents service.`,
+      `Owner check for ownerType=${ownerType} is admin-only until D2 / D3 / D4 wire up the assignment / membership lookups.`,
     );
   }
 }

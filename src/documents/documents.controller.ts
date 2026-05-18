@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -14,6 +15,7 @@ import { Throttle } from '@nestjs/throttler';
 import { DocumentsService } from './documents.service';
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
+import { ListDocumentsDto } from './dto/list-documents.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
@@ -53,6 +55,27 @@ export class DocumentsController {
     @Body() dto: CreateDocumentDto,
   ) {
     return this.documentsService.createDocument(dto, user);
+  }
+
+  @Get()
+  @ApiOperation({
+    summary:
+      'List documents. Admin sees all (filterable by ownerType/ownerId/type/status). Non-admin callers are scoped to their own (ownerType=user, ownerId=self).',
+  })
+  async list(@CurrentUser() user: User, @Query() filters: ListDocumentsDto) {
+    return this.documentsService.listDocuments(filters, user);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary:
+      'Fetch a single document. Admin can read any; non-admin callers can only read documents they own.',
+  })
+  async findOne(
+    @CurrentUser() user: User,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.documentsService.findOne(id, user);
   }
 
   @Get(':id/view-url')

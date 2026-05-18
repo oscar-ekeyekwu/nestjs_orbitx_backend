@@ -90,6 +90,16 @@ export const ErrorCodes = {
   FILE_004: 'FILE_NOT_FOUND',
   FILE_005: 'FILE_TOO_LARGE',
 
+  // Document errors (DOCUMENT_xxx)
+  // C2: expiry-date document type (driver_license / insurance /
+  // roadworthy etc.) was POSTed without an expiryDate. The caller
+  // must re-submit with the document's expiry filled in.
+  DOCUMENT_001: 'EXPIRY_REQUIRED',
+  // C2: the supplied (ownerType, ownerId) pair does not resolve to
+  // a real user / vehicle / company. Polymorphic owner lookup via
+  // loadOwner (ARCH-4) returns null.
+  DOCUMENT_002: 'INVALID_OWNER_REF',
+
   // Validation errors (VAL_xxx)
   VAL_001: 'VALIDATION_FAILED',
   VAL_002: 'INVALID_INPUT',
