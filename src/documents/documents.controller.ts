@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { DocumentsService } from './documents.service';
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
+import { CreateDocumentDto } from './dto/create-document.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
@@ -36,6 +37,22 @@ export class DocumentsController {
   })
   async getUploadUrl(@CurrentUser() user: User, @Body() dto: GetUploadUrlDto) {
     return this.documentsService.generateUploadUrl(dto, user);
+  }
+
+  @Post()
+  // C1: persist the Document row only after HEAD-verifying that the
+  // client actually completed the upload. Tighter throttle than the
+  // upload-url issuer because each call hits Spaces.
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  @ApiOperation({
+    summary:
+      'Persist the Document metadata row after a successful upload. HEAD-verifies the object exists in Spaces before writing.',
+  })
+  async createDocument(
+    @CurrentUser() user: User,
+    @Body() dto: CreateDocumentDto,
+  ) {
+    return this.documentsService.createDocument(dto, user);
   }
 
   @Get(':id/view-url')

@@ -76,10 +76,19 @@ export const ErrorCodes = {
   MEMBERSHIP_001: 'NOT_A_COMPANY_MEMBER',
 
   // File upload errors (FILE_xxx)
-  FILE_001: 'FILE_TOO_LARGE',
-  FILE_002: 'INVALID_FILE_TYPE',
+  // C1: caller asked for a presigned upload-url (or a /documents POST)
+  // with a MIME outside the Spaces allowlist (image/jpeg, image/png,
+  // application/pdf). Multer's local /uploads/* path also uses this
+  // slot for MIME-filter rejections.
+  FILE_001: 'INVALID_FILE_TYPE',
+  // C1: client POSTed metadata claiming an upload landed at a given
+  // objectKey, but a HEAD against Spaces returned 404 — the upload
+  // never completed (or used a stale presigned url). Client should
+  // request a fresh upload-url and retry.
+  FILE_002: 'STORAGE_OBJECT_NOT_FOUND',
   FILE_003: 'UPLOAD_FAILED',
   FILE_004: 'FILE_NOT_FOUND',
+  FILE_005: 'FILE_TOO_LARGE',
 
   // Validation errors (VAL_xxx)
   VAL_001: 'VALIDATION_FAILED',

@@ -110,6 +110,19 @@ export class SpacesStorageService {
     return { uploadUrl, objectKey };
   }
 
+  /**
+   * Build the canonical `endpoint/bucket/key` reference for an object.
+   * Persisted in `documents.fileUrl` purely as a stable, human-readable
+   * pointer — the bucket is private, so the URL is never used directly;
+   * actual reads always go through {@link generateViewUrl}.
+   */
+  getCanonicalUri(objectKey: string): string {
+    const endpoint =
+      this.config.get<string>('SPACES_ENDPOINT') ??
+      'https://nyc3.digitaloceanspaces.com';
+    return `${endpoint.replace(/\/$/, '')}/${this.bucket}/${objectKey}`;
+  }
+
   /** Issues a presigned GET url with a 15-minute TTL (NFR-S2). */
   async generateViewUrl(objectKey: string): Promise<string> {
     const command = new GetObjectCommand({

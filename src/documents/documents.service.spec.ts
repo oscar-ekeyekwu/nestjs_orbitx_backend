@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/unbound-method --
  * jest mock introspection is noisy under strict type-checked lint. */
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { DocumentsService } from './documents.service';
 import {
@@ -13,6 +17,7 @@ import {
   SpacesStorageService,
   type PresignedUpload,
 } from './spaces-storage.service';
+import { ErrorCodes } from '../common/constants/error-codes';
 import { UserRole } from '../common/enums/user-role.enum';
 import type { User } from '../users/entities/user.entity';
 
@@ -52,7 +57,20 @@ function buildDocument(overrides: Partial<Document>): Document {
   } as unknown as Document;
 }
 
-describe('DocumentsService (ARCH-9)', () => {
+function extractErrorCode(err: unknown): string | undefined {
+  if (!(err instanceof BadRequestException)) return undefined;
+  const response = err.getResponse();
+  if (
+    typeof response === 'object' &&
+    response !== null &&
+    'errorCode' in response
+  ) {
+    return (response as { errorCode: string }).errorCode;
+  }
+  return undefined;
+}
+
+describe('DocumentsService (ARCH-9 + C1)', () => {
   let service: DocumentsService;
   let documentRepo: jest.Mocked<Repository<Document>>;
   let storage: jest.Mocked<SpacesStorageService>;
@@ -60,12 +78,20 @@ describe('DocumentsService (ARCH-9)', () => {
   beforeEach(() => {
     documentRepo = {
       findOne: jest.fn(),
+      create: jest.fn((entity) => entity as Document),
+      save: jest.fn((entity: Document) =>
+        Promise.resolve({ ...entity, id: 'doc-new' }),
+      ),
     } as unknown as jest.Mocked<Repository<Document>>;
 
     storage = {
       generateUploadUrl: jest.fn(),
       generateViewUrl: jest.fn(),
       objectExists: jest.fn(),
+      getCanonicalUri: jest.fn(
+        (key: string) =>
+          `https://nyc3.digitaloceanspaces.com/orbit-kyc-v1/${key}`,
+      ),
     } as unknown as jest.Mocked<SpacesStorageService>;
 
     service = new DocumentsService(documentRepo, storage);
@@ -143,6 +169,153 @@ describe('DocumentsService (ARCH-9)', () => {
       );
 
       expect(result).toBe(presigned);
+    });
+
+    // C1 — MIME allowlist enforcement
+    it.each([
+      ['image/gif'],
+      ['application/msword'],
+      ['text/html'],
+      ['application/octet-stream'],
+      [''],
+    ])('FILE_001 — rejects non-allowlist contentType "%s"', async (badType) => {
+      const badDto = { ...dto, contentType: badType };
+      let caught: unknown;
+      try {
+        await service.generateUploadUrl(badDto, DRIVER);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(extractErrorCode(caught)).toBe(ErrorCodes.FILE_001);
+      expect(storage.generateUploadUrl).not.toHaveBeenCalled();
+    });
+
+    it.each([['image/jpeg'], ['image/png'], ['application/pdf']])(
+      'allows allowlist contentType "%s"',
+      async (mime) => {
+        storage.generateUploadUrl.mockResolvedValue({
+          uploadUrl: 'u',
+          objectKey: 'k',
+        });
+        await expect(
+          service.generateUploadUrl({ ...dto, contentType: mime }, DRIVER),
+        ).resolves.toBeDefined();
+      },
+    );
+  });
+
+  describe('createDocument (C1)', () => {
+    const dto = {
+      ownerType: DocumentOwnerType.USER,
+      ownerId: 'user-1',
+      docType: DocumentType.DRIVERS_LICENSE,
+      fileKey: 'user/user-1/drivers_license/abc.jpg',
+    };
+
+    it('persists row when HEAD confirms object exists', async () => {
+      storage.objectExists.mockResolvedValue(true);
+
+      const saved = await service.createDocument(dto, DRIVER);
+
+      expect(storage.objectExists).toHaveBeenCalledWith(dto.fileKey);
+      expect(documentRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ownerType: DocumentOwnerType.USER,
+          ownerId: 'user-1',
+          type: DocumentType.DRIVERS_LICENSE,
+          fileKey: dto.fileKey,
+          status: DocumentStatus.PENDING,
+          uploadedBy: 'user-1',
+        }),
+      );
+      expect(saved.id).toBe('doc-new');
+    });
+
+    it('seeds fileUrl from storage.getCanonicalUri(objectKey)', async () => {
+      storage.objectExists.mockResolvedValue(true);
+      await service.createDocument(dto, DRIVER);
+      expect(storage.getCanonicalUri).toHaveBeenCalledWith(dto.fileKey);
+      expect(documentRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileUrl: `https://nyc3.digitaloceanspaces.com/orbit-kyc-v1/${dto.fileKey}`,
+        }),
+      );
+    });
+
+    it('parses expiryDate string to Date when supplied', async () => {
+      storage.objectExists.mockResolvedValue(true);
+      await service.createDocument(
+        { ...dto, expiryDate: '2027-03-15' },
+        DRIVER,
+      );
+      const created = documentRepo.create.mock.calls[0][0] as {
+        expiryDate: Date | null;
+      };
+      expect(created.expiryDate).toBeInstanceOf(Date);
+      expect((created.expiryDate as Date).toISOString()).toMatch(/^2027-03-15/);
+    });
+
+    it('FILE_002 — HEAD returns false → 400 with errorCode FILE_002', async () => {
+      storage.objectExists.mockResolvedValue(false);
+
+      let caught: unknown;
+      try {
+        await service.createDocument(dto, DRIVER);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(extractErrorCode(caught)).toBe(ErrorCodes.FILE_002);
+      expect(documentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('FILE_002 — rejects objectKey whose prefix does not match owner/docType', async () => {
+      const badKey = 'user/SOMEONE-ELSE/drivers_license/abc.jpg';
+      let caught: unknown;
+      try {
+        await service.createDocument({ ...dto, fileKey: badKey }, DRIVER);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(extractErrorCode(caught)).toBe(ErrorCodes.FILE_002);
+      expect(storage.objectExists).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-admin trying to persist for another user (403)', async () => {
+      await expect(
+        service.createDocument(dto, OTHER_DRIVER),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(storage.objectExists).not.toHaveBeenCalled();
+    });
+
+    it('admin can persist for any owner', async () => {
+      storage.objectExists.mockResolvedValue(true);
+      await expect(
+        service.createDocument(
+          {
+            ...dto,
+            ownerId: 'someone-else',
+            fileKey: 'user/someone-else/drivers_license/x.jpg',
+          },
+          ADMIN,
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('non-admin cannot persist vehicle docs until C2 lands', async () => {
+      await expect(
+        service.createDocument(
+          {
+            ownerType: DocumentOwnerType.VEHICLE,
+            ownerId: 'vehicle-1',
+            docType: DocumentType.VEHICLE_REGISTRATION,
+            fileKey: 'vehicle/vehicle-1/vehicle_registration/x.pdf',
+          },
+          DRIVER,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 
