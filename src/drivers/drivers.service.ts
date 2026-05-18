@@ -4,17 +4,25 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, IsNull, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import {
   DriverProfile,
   DriverVerificationStatus,
 } from './entities/driver-profile.entity';
+import { driverStateMachine } from './driver-state-machine';
 import { VehicleAssignment } from '../vehicles/entities/vehicle-assignment.entity';
 import { Vehicle, VehicleStatus } from '../vehicles/entities/vehicle.entity';
 import { UserRole } from '../common/enums/user-role.enum';
 import { UsersService } from '../users/users.service';
 import { Naira, naira } from '../common/money';
 import { ErrorCodes } from '../common/constants/error-codes';
+import {
+  ApprovalAction,
+  ApprovalDecision,
+  ApprovalTargetType,
+} from '../approvals/entities/approval-decision.entity';
+import { UpdateDriverVerificationDto } from './dto/update-driver-verification.dto';
+import type { User } from '../users/entities/user.entity';
 
 /**
  * Eligible driver shape returned by `findEligibleDrivers`. Flattens the
@@ -32,6 +40,34 @@ export interface EligibleDriver {
   assignmentId: string;
 }
 
+/**
+ * Maps a driver verification edge to the audit action recorded against
+ * the driver. The state machine narrows the set of legal targets; this
+ * helper just rolls them up to the four ApprovalAction values.
+ */
+function approvalActionForDriver(
+  fromStatus: DriverVerificationStatus,
+  toStatus: DriverVerificationStatus,
+): ApprovalAction {
+  if (toStatus === DriverVerificationStatus.REJECTED) {
+    return ApprovalAction.REJECT;
+  }
+  if (
+    toStatus === DriverVerificationStatus.SUSPENDED_ADMIN ||
+    toStatus === DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED
+  ) {
+    return ApprovalAction.SUSPEND;
+  }
+  if (
+    toStatus === DriverVerificationStatus.ACTIVE &&
+    (fromStatus === DriverVerificationStatus.SUSPENDED_ADMIN ||
+      fromStatus === DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED)
+  ) {
+    return ApprovalAction.RESUME;
+  }
+  return ApprovalAction.APPROVE;
+}
+
 @Injectable()
 export class DriversService {
   constructor(
@@ -42,7 +78,80 @@ export class DriversService {
     @InjectRepository(Vehicle)
     private vehicleRepository: Repository<Vehicle>,
     private usersService: UsersService,
+    private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * C5 — admin moves a driver through driverStateMachine. Wraps the
+   * state-machine assertion + row write + approval_decisions insert
+   * in a single transaction so the audit ledger and the live status
+   * can never disagree (the canonical ARCH-3 pattern).
+   */
+  async transitionVerification(
+    driverId: string,
+    dto: UpdateDriverVerificationDto,
+    caller: User,
+  ): Promise<DriverProfile> {
+    return this.dataSource.transaction(async (manager) => {
+      const profile = await manager.findOne(DriverProfile, {
+        where: { id: driverId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!profile) {
+        throw new NotFoundException(`Driver ${driverId} not found`);
+      }
+
+      driverStateMachine.assertTransition(
+        profile.verificationStatus,
+        dto.status,
+        ErrorCodes.DRIVER_002,
+      );
+
+      const previousStatus = profile.verificationStatus;
+      profile.verificationStatus = dto.status;
+      // Suspension / rejection takes the driver offline immediately —
+      // can't keep dispatching to someone who just lost their license.
+      if (
+        dto.status === DriverVerificationStatus.SUSPENDED_ADMIN ||
+        dto.status === DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED ||
+        dto.status === DriverVerificationStatus.REJECTED
+      ) {
+        profile.isOnline = false;
+      }
+      await manager.save(profile);
+
+      await manager.insert(ApprovalDecision, {
+        targetType: ApprovalTargetType.DRIVER,
+        targetId: profile.id,
+        action: approvalActionForDriver(previousStatus, dto.status),
+        reviewerId: caller.id,
+        reason: dto.reason ?? null,
+      });
+
+      return profile;
+    });
+  }
+
+  /**
+   * C5 admin queue — list drivers in `pending_approval`. Returned as
+   * a flat shape so the admin frontend doesn't have to walk the User
+   * relation through JSON envelopes.
+   */
+  async findPendingForAdmin(opts?: {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: DriverProfile[]; total: number }> {
+    const limit = opts?.limit ?? 50;
+    const offset = opts?.offset ?? 0;
+    const [items, total] = await this.driverProfileRepository.findAndCount({
+      where: { verificationStatus: DriverVerificationStatus.PENDING_APPROVAL },
+      order: { updatedAt: 'DESC' },
+      take: limit,
+      skip: offset,
+      relations: ['user', 'company'],
+    });
+    return { items, total };
+  }
 
   async createProfile(
     userId: string,

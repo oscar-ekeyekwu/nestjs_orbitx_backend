@@ -4,6 +4,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { DriversService } from './drivers.service';
 import {
   DriverProfile,
@@ -58,6 +59,18 @@ describe('DriversService', () => {
         },
         { provide: getRepositoryToken(Vehicle), useValue: vehicleRepo },
         { provide: UsersService, useValue: usersService },
+        // C5 added a DataSource dep for transitionVerification. Tests
+        // that exercise non-transactional paths just need the token to
+        // resolve; the transaction wrapper is covered separately in
+        // companies/vehicles services that follow the same pattern.
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: jest.fn((cb: (m: unknown) => unknown) =>
+              Promise.resolve(cb({})),
+            ),
+          },
+        },
       ],
     }).compile();
 
@@ -334,6 +347,175 @@ describe('DriversService', () => {
           (args[0] as string).includes('"isOnline" = true'),
         ),
       ).toBe(true);
+    });
+  });
+
+  describe('transitionVerification (C5)', () => {
+    interface TxManager {
+      findOne: jest.Mock;
+      save: jest.Mock;
+      insert: jest.Mock;
+    }
+    let manager: TxManager;
+    let dataSource: { transaction: jest.Mock };
+
+    beforeEach(() => {
+      manager = {
+        findOne: jest.fn(),
+        save: jest.fn((entity: unknown) => Promise.resolve(entity)),
+        insert: jest.fn().mockResolvedValue({ identifiers: [{ id: 'ap-1' }] }),
+      };
+      dataSource = {
+        transaction: jest.fn((cb: (m: TxManager) => unknown) =>
+          Promise.resolve(cb(manager)),
+        ),
+      };
+      // Re-wire the service with our pinned transaction mock so we can
+      // observe the manager calls. The DI container produced a sentinel
+      // for DataSource in the top-level beforeEach which is fine for
+      // type resolution; we swap it here only for these tests.
+
+      (service as any).dataSource = dataSource;
+    });
+
+    const ADMIN = {
+      id: 'admin-1',
+      role: UserRole.ADMIN,
+    } as unknown as Parameters<DriversService['transitionVerification']>[2];
+
+    it('approves a pending driver and writes an approval_decisions row', async () => {
+      manager.findOne.mockResolvedValue({
+        id: 'd-1',
+        verificationStatus: DriverVerificationStatus.PENDING_APPROVAL,
+        isOnline: false,
+      });
+
+      const result = await service.transitionVerification(
+        'd-1',
+        {
+          status: DriverVerificationStatus.APPROVED,
+          reason: 'license + NIN verified',
+        },
+        ADMIN,
+      );
+
+      expect(
+        (result as { verificationStatus: DriverVerificationStatus })
+          .verificationStatus,
+      ).toBe(DriverVerificationStatus.APPROVED);
+      expect(manager.insert).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          targetType: 'driver',
+          action: 'approve',
+          reviewerId: 'admin-1',
+          reason: 'license + NIN verified',
+        }),
+      );
+    });
+
+    it('rejects pending_approval → rejected and forces driver offline', async () => {
+      manager.findOne.mockResolvedValue({
+        id: 'd-1',
+        verificationStatus: DriverVerificationStatus.PENDING_APPROVAL,
+        isOnline: true,
+      });
+
+      const result = await service.transitionVerification(
+        'd-1',
+        { status: DriverVerificationStatus.REJECTED, reason: 'bad selfie' },
+        ADMIN,
+      );
+
+      expect((result as { isOnline: boolean }).isOnline).toBe(false);
+      expect(manager.insert).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: 'reject', reason: 'bad selfie' }),
+      );
+    });
+
+    it('refuses an illegal transition (rejected → approved) with DRIVER_002', async () => {
+      manager.findOne.mockResolvedValue({
+        id: 'd-1',
+        verificationStatus: DriverVerificationStatus.REJECTED,
+        isOnline: false,
+      });
+
+      await expect(
+        service.transitionVerification(
+          'd-1',
+          { status: DriverVerificationStatus.APPROVED },
+          ADMIN,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(manager.insert).not.toHaveBeenCalled();
+    });
+
+    it('admin lifts suspended_admin → pending_approval and the audit row records APPROVE-as-RESUME path is unsuitable; we record APPROVE for the resubmit edge', async () => {
+      manager.findOne.mockResolvedValue({
+        id: 'd-1',
+        verificationStatus: DriverVerificationStatus.SUSPENDED_ADMIN,
+        isOnline: false,
+      });
+
+      await service.transitionVerification(
+        'd-1',
+        {
+          status: DriverVerificationStatus.PENDING_APPROVAL,
+          reason: 'try again',
+        },
+        ADMIN,
+      );
+
+      expect(manager.insert).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: 'approve' }),
+      );
+    });
+
+    it('404 when the driver does not exist', async () => {
+      manager.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.transitionVerification(
+          'missing',
+          { status: DriverVerificationStatus.APPROVED },
+          ADMIN,
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('findPendingForAdmin (C5)', () => {
+    it('returns rows + total via findAndCount filtered to pending_approval', async () => {
+      driverRepo.findOne.mockResolvedValue(null);
+      (
+        driverRepo as unknown as {
+          findAndCount: jest.Mock;
+        }
+      ).findAndCount = jest
+        .fn()
+        .mockResolvedValue([[{ id: 'd-1' }, { id: 'd-2' }], 2]);
+
+      const result = await service.findPendingForAdmin({
+        limit: 10,
+        offset: 0,
+      });
+
+      expect(result.total).toBe(2);
+      expect(result.items).toHaveLength(2);
+      const callArgs = (
+        driverRepo as unknown as {
+          findAndCount: jest.Mock;
+        }
+      ).findAndCount.mock.calls[0][0];
+      expect(callArgs).toMatchObject({
+        where: {
+          verificationStatus: DriverVerificationStatus.PENDING_APPROVAL,
+        },
+        take: 10,
+        skip: 0,
+      });
     });
   });
 });

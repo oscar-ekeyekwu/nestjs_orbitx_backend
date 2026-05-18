@@ -18,6 +18,7 @@ import {
   type PresignedUpload,
 } from './spaces-storage.service';
 import * as polymorphic from '../common/polymorphic';
+import { DocumentExpiryCron } from './document-expiry.cron';
 import { ErrorCodes } from '../common/constants/error-codes';
 import { UserRole } from '../common/enums/user-role.enum';
 import type { User } from '../users/entities/user.entity';
@@ -79,6 +80,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
   let documentRepo: jest.Mocked<Repository<Document>>;
   let storage: jest.Mocked<SpacesStorageService>;
   let dataSource: jest.Mocked<DataSource>;
+  let expiryCron: jest.Mocked<DocumentExpiryCron>;
   let loadOwnerSpy: jest.SpyInstance;
 
   beforeEach(() => {
@@ -103,6 +105,9 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
 
     dataSource = {
       manager: {} as unknown,
+      transaction: jest.fn((cb: (m: unknown) => unknown) =>
+        Promise.resolve(cb({})),
+      ) as unknown,
     } as unknown as jest.Mocked<DataSource>;
 
     // Default: owner lookup resolves to a non-null sentinel so C2's
@@ -111,7 +116,16 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       .spyOn(polymorphic, 'loadOwner')
       .mockResolvedValue({ id: 'owner-1' } as unknown as never);
 
-    service = new DocumentsService(documentRepo, storage, dataSource);
+    expiryCron = {
+      recoverOwnerIfDocsClear: jest.fn().mockResolvedValue(false),
+    } as unknown as jest.Mocked<DocumentExpiryCron>;
+
+    service = new DocumentsService(
+      documentRepo,
+      storage,
+      dataSource,
+      expiryCron,
+    );
   });
 
   afterEach(() => {
@@ -508,6 +522,139 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       await expect(service.findOne('missing', ADMIN)).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+  });
+
+  describe('reviewDocument (C5)', () => {
+    function setupTransactionalDoc(doc: Partial<Document>): Document {
+      const built = {
+        ...buildDocument(doc),
+        status: doc.status ?? DocumentStatus.PENDING,
+      } as Document;
+      const manager = {
+        findOne: jest.fn().mockResolvedValue(built),
+        save: jest.fn((entity: Document) => Promise.resolve(entity)),
+        insert: jest.fn().mockResolvedValue({ identifiers: [{ id: 'ap-1' }] }),
+      };
+      (dataSource.transaction as unknown as jest.Mock).mockImplementation(
+        (cb: (m: typeof manager) => unknown) => cb(manager),
+      );
+      return built;
+    }
+
+    it('approves a pending doc and fires the C4 recovery hook', async () => {
+      setupTransactionalDoc({
+        id: 'doc-1',
+        ownerType: DocumentOwnerType.USER,
+        ownerId: 'user-1',
+        status: DocumentStatus.PENDING,
+      });
+
+      const result = await service.reviewDocument(
+        'doc-1',
+        { status: DocumentStatus.APPROVED, reason: 'looks good' },
+        ADMIN,
+      );
+
+      expect(result.status).toBe(DocumentStatus.APPROVED);
+      expect(result.reviewedBy).toBe(ADMIN.id);
+      expect(result.reviewedAt).toBeInstanceOf(Date);
+      expect(expiryCron.recoverOwnerIfDocsClear).toHaveBeenCalledWith(
+        DocumentOwnerType.USER,
+        'user-1',
+      );
+    });
+
+    it('rejects with a reason, persists rejectionReason, does NOT fire recovery hook', async () => {
+      setupTransactionalDoc({
+        id: 'doc-1',
+        status: DocumentStatus.PENDING,
+      });
+
+      const result = await service.reviewDocument(
+        'doc-1',
+        {
+          status: DocumentStatus.REJECTED,
+          reason: 'Photo is blurry; please re-take.',
+        },
+        ADMIN,
+      );
+
+      expect(result.status).toBe(DocumentStatus.REJECTED);
+      expect(result.rejectionReason).toBe('Photo is blurry; please re-take.');
+      expect(expiryCron.recoverOwnerIfDocsClear).not.toHaveBeenCalled();
+    });
+
+    it('rejects without reason → 400 VAL_003', async () => {
+      let caught: unknown;
+      try {
+        await service.reviewDocument(
+          'doc-1',
+          { status: DocumentStatus.REJECTED },
+          ADMIN,
+        );
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(extractErrorCode(caught)).toBe(ErrorCodes.VAL_003);
+    });
+
+    it('only approved/rejected are allowed (expired is cron-owned) → 400 VAL_002', async () => {
+      let caught: unknown;
+      try {
+        await service.reviewDocument(
+          'doc-1',
+          { status: DocumentStatus.EXPIRED } as unknown as {
+            status: DocumentStatus;
+          },
+          ADMIN,
+        );
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(extractErrorCode(caught)).toBe(ErrorCodes.VAL_002);
+    });
+
+    it('refuses to re-review a non-pending document', async () => {
+      setupTransactionalDoc({
+        id: 'doc-1',
+        status: DocumentStatus.APPROVED,
+      });
+
+      let caught: unknown;
+      try {
+        await service.reviewDocument(
+          'doc-1',
+          { status: DocumentStatus.REJECTED, reason: 'no' },
+          ADMIN,
+        );
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(extractErrorCode(caught)).toBe(ErrorCodes.VAL_002);
+    });
+
+    it('recovery hook failure does not roll back the approval', async () => {
+      setupTransactionalDoc({
+        id: 'doc-1',
+        ownerType: DocumentOwnerType.USER,
+        ownerId: 'user-1',
+        status: DocumentStatus.PENDING,
+      });
+      expiryCron.recoverOwnerIfDocsClear.mockRejectedValue(
+        new Error('downstream unavailable'),
+      );
+
+      const result = await service.reviewDocument(
+        'doc-1',
+        { status: DocumentStatus.APPROVED },
+        ADMIN,
+      );
+
+      expect(result.status).toBe(DocumentStatus.APPROVED);
     });
   });
 

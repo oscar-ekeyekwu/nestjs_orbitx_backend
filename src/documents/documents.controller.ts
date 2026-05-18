@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -16,9 +17,13 @@ import { DocumentsService } from './documents.service';
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { ListDocumentsDto } from './dto/list-documents.dto';
+import { ReviewDocumentDto } from './dto/review-document.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
+import { UserRole } from '../common/enums/user-role.enum';
 
 @ApiTags('Documents')
 @ApiBearerAuth()
@@ -76,6 +81,21 @@ export class DocumentsController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.documentsService.findOne(id, user);
+  }
+
+  @Patch(':id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary:
+      'Admin reviews a pending document. Body: { status: approved | rejected, reason? }. Writes an approval_decisions audit row in the same transaction; on approve, fires the C4 recovery hook to lift a docs-expired suspension if no other expired docs remain.',
+  })
+  async review(
+    @CurrentUser() user: User,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReviewDocumentDto,
+  ) {
+    return this.documentsService.reviewDocument(id, dto, user);
   }
 
   @Get(':id/view-url')

@@ -19,6 +19,13 @@ import {
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { ListDocumentsDto } from './dto/list-documents.dto';
+import { ReviewDocumentDto } from './dto/review-document.dto';
+import { DocumentExpiryCron } from './document-expiry.cron';
+import {
+  ApprovalAction,
+  ApprovalDecision,
+  ApprovalTargetType,
+} from '../approvals/entities/approval-decision.entity';
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
   isAllowedDocumentMimeType,
@@ -36,6 +43,7 @@ export class DocumentsService {
     private readonly documentRepo: Repository<Document>,
     private readonly storage: SpacesStorageService,
     private readonly dataSource: DataSource,
+    private readonly expiryCron: DocumentExpiryCron,
   ) {}
 
   /**
@@ -162,6 +170,94 @@ export class DocumentsService {
       this.assertOwnerMatchesCaller(doc.ownerType, doc.ownerId, caller);
     }
     return doc;
+  }
+
+  /**
+   * C5 — admin approves or rejects a pending document. Wraps the
+   * status flip + approval_decisions insert in a single transaction.
+   *
+   * On approve, the cron's `recoverOwnerIfDocsClear` hook is called
+   * AFTER the commit so a freshly-approved license can lift a
+   * `suspended_docs_expired` driver back to ACTIVE in one round-trip.
+   * The hook is idempotent and short-circuits cheaply when other
+   * expired docs remain.
+   *
+   * Rejection records the reason on the document row so the owner
+   * sees actionable feedback when they re-upload.
+   */
+  async reviewDocument(
+    documentId: string,
+    dto: ReviewDocumentDto,
+    caller: User,
+  ): Promise<Document> {
+    const allowed: DocumentStatus[] = [
+      DocumentStatus.APPROVED,
+      DocumentStatus.REJECTED,
+    ];
+    if (!allowed.includes(dto.status)) {
+      throw new BadRequestException({
+        message: `Review status must be one of: ${allowed.join(', ')}.`,
+        errorCode: ErrorCodes.VAL_002,
+      });
+    }
+    if (dto.status === DocumentStatus.REJECTED && !dto.reason?.trim()) {
+      throw new BadRequestException({
+        message: 'A rejection reason is required.',
+        errorCode: ErrorCodes.VAL_003,
+      });
+    }
+
+    const reviewed = await this.dataSource.transaction(async (manager) => {
+      const doc = await manager.findOne(Document, {
+        where: { id: documentId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!doc) {
+        throw new NotFoundException(`Document ${documentId} not found`);
+      }
+      if (doc.status !== DocumentStatus.PENDING) {
+        // Once a doc is approved / rejected / expired, re-reviewing it
+        // would silently overwrite the audit trail. Force the admin to
+        // ask the owner to upload a fresh copy instead.
+        throw new BadRequestException({
+          message: `Document is not pending review (current status: ${doc.status}).`,
+          errorCode: ErrorCodes.VAL_002,
+        });
+      }
+
+      doc.status = dto.status;
+      doc.reviewedAt = new Date();
+      doc.reviewedBy = caller.id;
+      doc.rejectionReason =
+        dto.status === DocumentStatus.REJECTED ? (dto.reason ?? null) : null;
+      await manager.save(doc);
+
+      await manager.insert(ApprovalDecision, {
+        targetType: ApprovalTargetType.DOCUMENT,
+        targetId: doc.id,
+        action:
+          dto.status === DocumentStatus.APPROVED
+            ? ApprovalAction.APPROVE
+            : ApprovalAction.REJECT,
+        reviewerId: caller.id,
+        reason: dto.reason ?? null,
+      });
+
+      return doc;
+    });
+
+    // C4 recovery hook — fires only on approval, after the commit, so a
+    // failure inside the hook can't roll back the review itself.
+    if (reviewed.status === DocumentStatus.APPROVED) {
+      await this.expiryCron
+        .recoverOwnerIfDocsClear(reviewed.ownerType, reviewed.ownerId)
+        .catch(() => {
+          // Recovery is best-effort: if it fails, the doc is still
+          // approved and the next nightly sweep will reconcile.
+        });
+    }
+
+    return reviewed;
   }
 
   /**
