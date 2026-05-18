@@ -41,3 +41,35 @@ export const EXPIRY_REQUIRED_DOCUMENT_TYPES: ReadonlySet<DocumentType> =
 export function requiresExpiry(type: DocumentType): boolean {
   return EXPIRY_REQUIRED_DOCUMENT_TYPES.has(type);
 }
+
+/**
+ * C4 — document types that, when expired, trigger the owner-entity
+ * suspension state transition. These are the regulator-issued
+ * time-bound docs whose absence makes continued operation a real
+ * compliance hazard (PRD DR-L2 / F1-3 / P2):
+ *
+ *   driver_license / nin     → driver
+ *   vehicle_registration     → vehicle
+ *   insurance / roadworthy   → vehicle
+ *   lasaa_permit             → vehicle
+ *   nipost_license           → driver (commercial courier)
+ *   cac_certificate          → company
+ *
+ * NIN and CAC do not appear in EXPIRY_REQUIRED_DOCUMENT_TYPES (they
+ * don't expire by issuer), so they cannot reach the suspension path
+ * via the expiry cron. They're included here for completeness so a
+ * future "missing required doc" sweep can use the same constant.
+ */
+export const SUSPENSION_TRIGGER_DOC_TYPES: ReadonlySet<DocumentType> = new Set([
+  DocumentType.DRIVERS_LICENSE,
+  DocumentType.INSURANCE,
+  DocumentType.ROADWORTHY,
+  DocumentType.LASAA_PERMIT,
+  DocumentType.NIPOST_LICENSE,
+  DocumentType.VEHICLE_REGISTRATION,
+  DocumentType.CAC_CERTIFICATE,
+]);
+
+export function suspensionTriggerFor(type: DocumentType): boolean {
+  return SUSPENSION_TRIGGER_DOC_TYPES.has(type);
+}
