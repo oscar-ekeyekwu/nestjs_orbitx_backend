@@ -8,7 +8,6 @@ describe('companyStateMachine', () => {
   describe('declared transitions (positive cases)', () => {
     const legal: Array<[CompanyStatus, CompanyStatus]> = [
       [C.PENDING, C.APPROVED],
-      [C.PENDING, C.SUSPENDED],
       [C.APPROVED, C.SUSPENDED],
       [C.SUSPENDED, C.APPROVED],
     ];
@@ -23,6 +22,9 @@ describe('companyStateMachine', () => {
 
   describe('illegal transitions (negative cases)', () => {
     const illegal: Array<[CompanyStatus, CompanyStatus]> = [
+      // B1 spec: suspension only from approved. A pending company that
+      // fails review stays pending; admin re-runs the approval flow.
+      [C.PENDING, C.SUSPENDED],
       // Approved cannot regress to pending without suspension first.
       [C.APPROVED, C.PENDING],
       // Suspended cannot return to pending — only to approved.
