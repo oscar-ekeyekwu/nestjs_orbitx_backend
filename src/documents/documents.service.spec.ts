@@ -20,6 +20,7 @@ import {
 import * as polymorphic from '../common/polymorphic';
 import { DocumentExpiryCron } from './document-expiry.cron';
 import { ApprovalsService } from '../approvals/approvals.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ErrorCodes } from '../common/constants/error-codes';
 import { UserRole } from '../common/enums/user-role.enum';
 import type { User } from '../users/entities/user.entity';
@@ -132,12 +133,19 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       ),
     } as unknown as ApprovalsService;
 
+    // ARCH-10: EventEmitter2 dep — reviewDocument emits
+    // document.approved / document.rejected after commit.
+    const events = {
+      emit: jest.fn().mockReturnValue(true),
+    } as unknown as EventEmitter2;
+
     service = new DocumentsService(
       documentRepo,
       storage,
       dataSource,
       expiryCron,
       approvalsService,
+      events,
     );
   });
 

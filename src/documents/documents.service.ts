@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Document,
   DocumentOwnerType,
@@ -45,6 +46,7 @@ export class DocumentsService {
     private readonly dataSource: DataSource,
     private readonly expiryCron: DocumentExpiryCron,
     private readonly approvalsService: ApprovalsService,
+    private readonly events: EventEmitter2,
   ) {}
 
   /**
@@ -257,6 +259,20 @@ export class DocumentsService {
           // approved and the next nightly sweep will reconcile.
         });
     }
+
+    // ARCH-10: notify the owner via push. Emit AFTER the transaction
+    // commits and the recovery hook runs so subscribers see the final
+    // post-recovery state. The fanout listener is fire-and-forget.
+    const reviewEventName =
+      reviewed.status === DocumentStatus.APPROVED
+        ? 'document.approved'
+        : 'document.rejected';
+    this.events.emit(reviewEventName, {
+      documentId: reviewed.id,
+      userId:
+        reviewed.ownerType === DocumentOwnerType.USER ? reviewed.ownerId : '',
+      reason: reviewed.rejectionReason,
+    });
 
     return reviewed;
   }

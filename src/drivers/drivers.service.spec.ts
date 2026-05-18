@@ -5,6 +5,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DriversService } from './drivers.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import {
@@ -91,6 +92,13 @@ describe('DriversService', () => {
               },
             ),
           },
+        },
+        // ARCH-10: EventEmitter2 dep on DriversService.
+        // The transitionVerification path emits driver.approved /
+        // driver.rejected after the transaction commits.
+        {
+          provide: EventEmitter2,
+          useValue: { emit: jest.fn().mockReturnValue(true) },
         },
       ],
     }).compile();

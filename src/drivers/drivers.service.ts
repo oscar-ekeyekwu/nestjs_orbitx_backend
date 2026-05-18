@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   DriverProfile,
   DriverVerificationStatus,
@@ -80,6 +81,7 @@ export class DriversService {
     private usersService: UsersService,
     private readonly dataSource: DataSource,
     private readonly approvalsService: ApprovalsService,
+    private readonly events: EventEmitter2,
   ) {}
 
   /**
@@ -93,7 +95,7 @@ export class DriversService {
     dto: UpdateDriverVerificationDto,
     caller: User,
   ): Promise<DriverProfile> {
-    return this.dataSource.transaction(async (manager) => {
+    const reviewed = await this.dataSource.transaction(async (manager) => {
       const profile = await manager.findOne(DriverProfile, {
         where: { id: driverId },
         lock: { mode: 'pessimistic_write' },
@@ -131,6 +133,25 @@ export class DriversService {
 
       return profile;
     });
+
+    // ARCH-10 push fanout. Emit AFTER the transaction commits — a
+    // slow Firebase call can never hold the admin's PATCH open
+    // (PushFanoutService is fire-and-forget). The reviewed profile
+    // already carries the userId we'd target.
+    const reviewEvent =
+      dto.status === DriverVerificationStatus.APPROVED
+        ? 'driver.approved'
+        : dto.status === DriverVerificationStatus.REJECTED
+          ? 'driver.rejected'
+          : null;
+    if (reviewEvent) {
+      this.events.emit(reviewEvent, {
+        userId: reviewed.userId,
+        reason: dto.reason ?? null,
+      });
+    }
+
+    return reviewed;
   }
 
   /**
