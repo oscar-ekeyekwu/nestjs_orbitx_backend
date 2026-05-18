@@ -6,6 +6,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { DriversService } from './drivers.service';
+import { ApprovalsService } from '../approvals/approvals.service';
 import {
   DriverProfile,
   DriverVerificationStatus,
@@ -68,6 +69,26 @@ describe('DriversService', () => {
           useValue: {
             transaction: jest.fn((cb: (m: unknown) => unknown) =>
               Promise.resolve(cb({})),
+            ),
+          },
+        },
+        // C6: route audit-decision writes through the shared service.
+        // For the tests that don't exercise transitionVerification this
+        // is just a token; for the ones that do, the manager.insert spy
+        // captures the call exactly as before the refactor.
+        {
+          provide: ApprovalsService,
+          useValue: {
+            recordDecision: jest.fn(
+              (
+                manager: { insert: jest.Mock },
+                input: Record<string, unknown>,
+              ): Promise<unknown> => {
+                return manager.insert(
+                  'approval_decisions',
+                  input,
+                ) as Promise<unknown>;
+              },
             ),
           },
         },

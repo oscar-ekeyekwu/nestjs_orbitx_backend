@@ -18,9 +18,9 @@ import { Naira, naira } from '../common/money';
 import { ErrorCodes } from '../common/constants/error-codes';
 import {
   ApprovalAction,
-  ApprovalDecision,
   ApprovalTargetType,
 } from '../approvals/entities/approval-decision.entity';
+import { ApprovalsService } from '../approvals/approvals.service';
 import { UpdateDriverVerificationDto } from './dto/update-driver-verification.dto';
 import type { User } from '../users/entities/user.entity';
 
@@ -79,6 +79,7 @@ export class DriversService {
     private vehicleRepository: Repository<Vehicle>,
     private usersService: UsersService,
     private readonly dataSource: DataSource,
+    private readonly approvalsService: ApprovalsService,
   ) {}
 
   /**
@@ -120,12 +121,12 @@ export class DriversService {
       }
       await manager.save(profile);
 
-      await manager.insert(ApprovalDecision, {
+      await this.approvalsService.recordDecision(manager, {
         targetType: ApprovalTargetType.DRIVER,
         targetId: profile.id,
         action: approvalActionForDriver(previousStatus, dto.status),
         reviewerId: caller.id,
-        reason: dto.reason ?? null,
+        reason: dto.reason,
       });
 
       return profile;

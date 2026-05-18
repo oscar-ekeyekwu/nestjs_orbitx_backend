@@ -21,6 +21,7 @@ import {
   ApprovalDecision,
   ApprovalTargetType,
 } from '../approvals/entities/approval-decision.entity';
+import { ApprovalsService } from '../approvals/approvals.service';
 import {
   DriverAccountType,
   DriverProfile,
@@ -104,10 +105,16 @@ describe('VehiclesService (B3)', () => {
       ),
     };
 
+    const approvalsService = new ApprovalsService({
+      find: jest.fn(),
+      findAndCount: jest.fn(),
+    } as unknown as Repository<ApprovalDecision>);
+
     service = new VehiclesService(
       vehicleRepo,
       driverProfileRepo,
       dataSource as unknown as DataSource,
+      approvalsService,
     );
   });
 

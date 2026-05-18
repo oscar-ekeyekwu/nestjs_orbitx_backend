@@ -19,6 +19,7 @@ import {
 } from './spaces-storage.service';
 import * as polymorphic from '../common/polymorphic';
 import { DocumentExpiryCron } from './document-expiry.cron';
+import { ApprovalsService } from '../approvals/approvals.service';
 import { ErrorCodes } from '../common/constants/error-codes';
 import { UserRole } from '../common/enums/user-role.enum';
 import type { User } from '../users/entities/user.entity';
@@ -120,11 +121,23 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       recoverOwnerIfDocsClear: jest.fn().mockResolvedValue(false),
     } as unknown as jest.Mocked<DocumentExpiryCron>;
 
+    // C6: shared audit-ledger service. The recordDecision implementation
+    // is a passthrough to manager.insert so the existing transactional
+    // setupTransactionalDoc fixtures keep observing the same call shape.
+    const approvalsService = {
+      recordDecision: jest.fn(
+        async (manager: { insert: jest.Mock }, input: unknown) => {
+          await manager.insert('approval_decisions', input);
+        },
+      ),
+    } as unknown as ApprovalsService;
+
     service = new DocumentsService(
       documentRepo,
       storage,
       dataSource,
       expiryCron,
+      approvalsService,
     );
   });
 

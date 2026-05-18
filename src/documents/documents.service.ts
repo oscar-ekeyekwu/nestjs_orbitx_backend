@@ -23,9 +23,9 @@ import { ReviewDocumentDto } from './dto/review-document.dto';
 import { DocumentExpiryCron } from './document-expiry.cron';
 import {
   ApprovalAction,
-  ApprovalDecision,
   ApprovalTargetType,
 } from '../approvals/entities/approval-decision.entity';
+import { ApprovalsService } from '../approvals/approvals.service';
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
   isAllowedDocumentMimeType,
@@ -44,6 +44,7 @@ export class DocumentsService {
     private readonly storage: SpacesStorageService,
     private readonly dataSource: DataSource,
     private readonly expiryCron: DocumentExpiryCron,
+    private readonly approvalsService: ApprovalsService,
   ) {}
 
   /**
@@ -232,7 +233,7 @@ export class DocumentsService {
         dto.status === DocumentStatus.REJECTED ? (dto.reason ?? null) : null;
       await manager.save(doc);
 
-      await manager.insert(ApprovalDecision, {
+      await this.approvalsService.recordDecision(manager, {
         targetType: ApprovalTargetType.DOCUMENT,
         targetId: doc.id,
         action:
@@ -240,7 +241,7 @@ export class DocumentsService {
             ? ApprovalAction.APPROVE
             : ApprovalAction.REJECT,
         reviewerId: caller.id,
-        reason: dto.reason ?? null,
+        reason: dto.reason,
       });
 
       return doc;

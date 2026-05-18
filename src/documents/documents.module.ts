@@ -8,10 +8,12 @@ import { Document } from './entities/document.entity';
 import { DriverProfile } from '../drivers/entities/driver-profile.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { Company } from '../companies/entities/company.entity';
+import { ApprovalsModule } from '../approvals/approvals.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Document, DriverProfile, Vehicle, Company]),
+    ApprovalsModule,
   ],
   providers: [DocumentsService, SpacesStorageService, DocumentExpiryCron],
   controllers: [DocumentsController],

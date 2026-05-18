@@ -14,9 +14,9 @@ import {
 } from './entities/vehicle.entity';
 import {
   ApprovalAction,
-  ApprovalDecision,
   ApprovalTargetType,
 } from '../approvals/entities/approval-decision.entity';
+import { ApprovalsService } from '../approvals/approvals.service';
 import {
   DriverAccountType,
   DriverProfile,
@@ -92,6 +92,7 @@ export class VehiclesService {
     @InjectRepository(DriverProfile)
     private readonly driverProfileRepo: Repository<DriverProfile>,
     private readonly dataSource: DataSource,
+    private readonly approvalsService: ApprovalsService,
   ) {}
 
   /**
@@ -334,12 +335,12 @@ export class VehiclesService {
       }
       await manager.save(vehicle);
 
-      await manager.insert(ApprovalDecision, {
+      await this.approvalsService.recordDecision(manager, {
         targetType: ApprovalTargetType.VEHICLE,
         targetId: vehicle.id,
         action: approvalActionFor(previousStatus, dto.status),
         reviewerId: caller.id,
-        reason: dto.reason ?? null,
+        reason: dto.reason,
       });
 
       return vehicle;

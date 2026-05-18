@@ -6,11 +6,13 @@ import { DriverProfile } from './entities/driver-profile.entity';
 import { VehicleAssignment } from '../vehicles/entities/vehicle-assignment.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { UsersModule } from '../users/users.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DriverProfile, VehicleAssignment, Vehicle]),
     UsersModule,
+    ApprovalsModule,
   ],
   controllers: [DriversController],
   providers: [DriversService],

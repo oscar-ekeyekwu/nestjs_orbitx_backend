@@ -10,6 +10,7 @@ import { ApprovalDecision } from '../approvals/entities/approval-decision.entity
 import { DriverProfile } from '../drivers/entities/driver-profile.entity';
 import { Company } from '../companies/entities/company.entity';
 import { CompaniesModule } from '../companies/companies.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { CompaniesModule } from '../companies/companies.module';
     // CompanyMembershipsService is consumed by VehicleAssignmentsService
     // for the "driver must be an approved member" check.
     CompaniesModule,
+    ApprovalsModule,
   ],
   providers: [VehiclesService, VehicleAssignmentsService],
   controllers: [VehiclesController, VehicleAssignmentsController],

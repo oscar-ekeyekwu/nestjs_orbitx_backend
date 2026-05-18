@@ -15,6 +15,7 @@ import {
   ApprovalDecision,
   ApprovalTargetType,
 } from '../approvals/entities/approval-decision.entity';
+import { ApprovalsService } from '../approvals/approvals.service';
 import { ErrorCodes } from '../common/constants/error-codes';
 import { UserRole } from '../common/enums/user-role.enum';
 import type { User } from '../users/entities/user.entity';
@@ -84,9 +85,19 @@ describe('CompaniesService (B1)', () => {
       ),
     };
 
+    // C6: ApprovalsService is the single insert point for the ledger.
+    // We instantiate it with a stub repo so its `recordDecision` still
+    // calls manager.insert(ApprovalDecision, ...) through the supplied
+    // EntityManager — keeping the existing insertCalls assertions valid.
+    const approvalsService = new ApprovalsService({
+      find: jest.fn(),
+      findAndCount: jest.fn(),
+    } as unknown as Repository<ApprovalDecision>);
+
     service = new CompaniesService(
       companyRepo,
       dataSource as unknown as DataSource,
+      approvalsService,
     );
   });
 

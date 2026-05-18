@@ -8,9 +8,9 @@ import { DataSource, Repository } from 'typeorm';
 import { Company, CompanyStatus } from './entities/company.entity';
 import {
   ApprovalAction,
-  ApprovalDecision,
   ApprovalTargetType,
 } from '../approvals/entities/approval-decision.entity';
+import { ApprovalsService } from '../approvals/approvals.service';
 import { companyStateMachine } from './company-state-machine';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyStatusDto } from './dto/update-company-status.dto';
@@ -51,6 +51,7 @@ export class CompaniesService {
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
     private readonly dataSource: DataSource,
+    private readonly approvalsService: ApprovalsService,
   ) {}
 
   /**
@@ -149,12 +150,12 @@ export class CompaniesService {
       company.status = dto.status;
       await manager.save(company);
 
-      await manager.insert(ApprovalDecision, {
+      await this.approvalsService.recordDecision(manager, {
         targetType: ApprovalTargetType.COMPANY,
         targetId: company.id,
         action: approvalActionFor(previousStatus, dto.status),
         reviewerId: caller.id,
-        reason: dto.reason ?? null,
+        reason: dto.reason,
       });
 
       return company;
