@@ -21,6 +21,7 @@ import { PaymentModule } from './payment/payment.module';
 import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
 import { CompaniesModule } from './companies/companies.module';
+import { VehiclesModule } from './vehicles/vehicles.module';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -68,6 +69,7 @@ import { CompaniesModule } from './companies/companies.module';
     AdminModule,
     SupportModule,
     CompaniesModule,
+    VehiclesModule,
   ],
   controllers: [],
   providers: [
