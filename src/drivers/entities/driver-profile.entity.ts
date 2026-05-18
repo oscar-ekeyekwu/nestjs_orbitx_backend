@@ -90,14 +90,11 @@ export class DriverProfile {
   @Column('decimal', { precision: 10, scale: 7, nullable: true })
   currentLongitude: number;
 
-  @Column({ nullable: true })
-  vehicleType: string;
-
-  @Column({ nullable: true })
-  vehiclePlate: string;
-
-  @Column({ nullable: true })
-  licenseNumber: string;
+  // vehicleType / vehiclePlate / licenseNumber used to live inline here.
+  // B2 split them out: vehicle facts go to the `vehicles` table; the
+  // driver's licence number is captured as a Document row of type
+  // DRIVERS_LICENSE. Backed by the
+  // 1779926400000-DropInlineVehicleColumnsFromDriverProfiles migration.
 
   @Column({ default: 0 })
   totalDeliveries: number;
