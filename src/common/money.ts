@@ -47,8 +47,16 @@ export function naira(value: string | number | Decimal): Naira {
 export const nairaTransformer: ValueTransformer = {
   to: (
     value: Naira | Decimal | string | number | null | undefined,
-  ): string | null => {
-    if (value === null || value === undefined) return null;
+  ): string | null | undefined => {
+    // Distinguishing `undefined` from `null` is load-bearing: TypeORM
+    // OMITS columns whose `to()` returns `undefined` from the generated
+    // INSERT, so a `NOT NULL DEFAULT 0` column (wallet balance,
+    // driver_profiles.totalEarnings, etc.) gets the DB default applied.
+    // Returning `null` instead would write an explicit `null` and trip
+    // the NOT NULL constraint — exactly the failure mode that bit
+    // drivers.service.createProfile after ARCH-1 landed.
+    if (value === undefined) return undefined;
+    if (value === null) return null;
     return new Decimal(value as Decimal | string | number).toFixed(2);
   },
   from: (value: string | number | null | undefined): Naira | null => {

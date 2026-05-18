@@ -80,9 +80,16 @@ describe('common/money', () => {
       expect(nairaTransformer.to(new Decimal('1500.555'))).toBe('1500.56');
     });
 
-    it('to(): returns null for null / undefined (column nullability)', () => {
+    it('to(): returns null for null (explicit nullable value)', () => {
       expect(nairaTransformer.to(null)).toBeNull();
-      expect(nairaTransformer.to(undefined)).toBeNull();
+    });
+
+    it('to(): returns undefined for undefined so TypeORM omits the column and the DB DEFAULT applies', () => {
+      // Load-bearing: a NOT NULL DEFAULT 0 column (wallet balance,
+      // driver_profiles.totalEarnings, etc.) would reject an explicit
+      // null, but TypeORM happily omits the column when `to()` returns
+      // undefined. See the long-form note in src/common/money.ts.
+      expect(nairaTransformer.to(undefined)).toBeUndefined();
     });
 
     it('from(): hydrates DB strings into Naira and tolerates null', () => {
