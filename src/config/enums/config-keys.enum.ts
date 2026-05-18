@@ -22,6 +22,12 @@ export enum ConfigKey {
 
   // Service Zone (ARCH-5)
   LAGOS_SERVICE_BBOX = 'LAGOS_SERVICE_BBOX',
+
+  // Vehicle edit policy (seeded in B7; consumed by F3 in Sprint 4).
+  // Allowed values: 'continue' | 'pending'. 'continue' lets the vehicle
+  // stay operational while an edit goes through approval; 'pending'
+  // pulls it from dispatch until the admin signs off.
+  VEHICLE_EDIT_GRACE_MODE = 'VEHICLE_EDIT_GRACE_MODE',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -100,5 +106,11 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'Inclusive lat/lng bounding box for the Lagos service zone. Drivers cannot go online and orders cannot be created outside this region. Admin-tunable without redeploy; v1.1 swaps this for a PostGIS service_zones polygon at the same callsites.',
     dataType: 'json',
+  },
+  [ConfigKey.VEHICLE_EDIT_GRACE_MODE]: {
+    value: 'continue',
+    description:
+      'How a vehicle behaves while an edit is awaiting admin review. "continue" = stays operational, "pending" = pulled from dispatch until approved. F3 (Sprint 4) reads this; B7 seeds the default.',
+    dataType: 'string',
   },
 };
