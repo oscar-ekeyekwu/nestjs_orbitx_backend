@@ -33,6 +33,16 @@ import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
 import { SupportTicket } from './support/entities/support-ticket.entity';
 import { NotificationTemplate } from './notifications/entities/notification-template.entity';
+// ARCH-2 v1 entities — register here so TypeORM's metadata builder
+// can resolve relations like DriverProfile.company before the
+// feature modules that own them ship.
+import { Company } from './companies/entities/company.entity';
+import { CompanyMembership } from './companies/entities/company-membership.entity';
+import { Vehicle } from './vehicles/entities/vehicle.entity';
+import { VehicleAssignment } from './vehicles/entities/vehicle-assignment.entity';
+import { Document } from './documents/entities/document.entity';
+import { ApprovalDecision } from './approvals/entities/approval-decision.entity';
+import { DeviceToken } from './notifications/entities/device-token.entity';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -79,6 +89,14 @@ import { NotificationTemplate } from './notifications/entities/notification-temp
           FAQ,
           SupportTicket,
           NotificationTemplate,
+          // ARCH-2 v1 entities
+          Company,
+          CompanyMembership,
+          Vehicle,
+          VehicleAssignment,
+          Document,
+          ApprovalDecision,
+          DeviceToken,
         ],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',
