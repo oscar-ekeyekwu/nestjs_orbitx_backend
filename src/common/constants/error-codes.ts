@@ -61,6 +61,17 @@ export const ErrorCodes = {
   // ARCH-5: caller is outside the configured Lagos service bbox.
   ZONE_001: 'OUTSIDE_SERVICE_ZONE',
 
+  // Assignment errors (ASSIGNMENT_xxx)
+  // B4: another active vehicle_assignments row already exists for the
+  // (vehicle, driver) the caller is trying to assign. Surfaces the
+  // Postgres unique-partial-index violation as a clean 409.
+  ASSIGNMENT_001: 'DUPLICATE_ACTIVE_ASSIGNMENT',
+
+  // Membership errors (MEMBERSHIP_xxx)
+  // B4: the driver isn't an approved member of the company, or the
+  // caller isn't authorized to manage the company's memberships.
+  MEMBERSHIP_001: 'NOT_A_COMPANY_MEMBER',
+
   // File upload errors (FILE_xxx)
   FILE_001: 'FILE_TOO_LARGE',
   FILE_002: 'INVALID_FILE_TYPE',

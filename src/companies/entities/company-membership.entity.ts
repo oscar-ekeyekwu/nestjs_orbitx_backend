@@ -17,9 +17,15 @@ export enum CompanyMembershipRole {
 }
 
 export enum CompanyMembershipStatus {
+  // Pending: SMS / email invite issued, driver hasn't accepted yet.
   PENDING = 'pending',
-  ACTIVE = 'active',
-  INACTIVE = 'inactive',
+  // Approved: driver is an active member of the company. Doubles as the
+  // gate VehicleAssignmentsService consults before letting an owner
+  // assign vehicles to this driver.
+  APPROVED = 'approved',
+  // Removed: soft-revoked membership. Row stays for audit; the driver
+  // can be re-invited later (which writes a new pending row).
+  REMOVED = 'removed',
 }
 
 /**
