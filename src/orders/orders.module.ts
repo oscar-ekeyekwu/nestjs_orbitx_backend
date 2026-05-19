@@ -12,6 +12,7 @@ import { SystemConfigModule } from '../config/config.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { NotificationsModule } from '../notifications/notification.module';
 import { ReceiptsModule } from '../receipts/receipts.module';
+import { VehiclesModule } from '../vehicles/vehicles.module';
 
 @Module({
   imports: [
@@ -19,6 +20,10 @@ import { ReceiptsModule } from '../receipts/receipts.module';
     UsersModule,
     WalletModule,
     SystemConfigModule,
+    // F2 — acceptOrder lazy-resolves VehiclePendingUpdatesService +
+    // VehicleAssignmentRepository through ModuleRef to enforce the
+    // lock-mode gate. Static import here makes the providers discoverable.
+    VehiclesModule,
     // forwardRef because RealtimeModule also imports OrdersModule
     // (gateway calls back into ordersService for driver-location persistence).
     forwardRef(() => RealtimeModule),

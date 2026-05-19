@@ -4,10 +4,12 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { Order, OrderStatus, PackageSize } from './entities/order.entity';
 import { ErrorCodes } from '../common/constants/error-codes';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -48,6 +50,13 @@ export class OrdersService {
     // are logged but never roll back the status transition.
     private readonly receipts: ReceiptsService,
     private readonly dataSource: DataSource,
+    // F2 — lazy-resolved so legacy specs that construct OrdersService
+    // directly (without the vehicles module wired up) still run. When
+    // ModuleRef is undefined the lock-mode gate is a no-op, which is
+    // also the correct production behaviour when VEHICLE_EDIT_GRACE_MODE
+    // is `continue` (the default).
+    @Optional()
+    private readonly moduleRef?: ModuleRef,
   ) {}
 
   /**
@@ -273,6 +282,12 @@ export class OrdersService {
         `Insufficient balance. Minimum balance of ₦${minBalance} required to accept orders`,
       );
     }
+
+    // F2 — lock-mode gate. If VEHICLE_EDIT_GRACE_MODE=lock and the
+    // driver's active vehicle has a pending regulatory edit awaiting
+    // admin review, refuse acceptance with VEHICLE_002. continue mode
+    // (the default) skips this entirely.
+    await this.assertNoVehicleEditLock(driverId);
 
     // ARCH-12 — first-accept-wins via pessimistic_write on the order
     // row. Two concurrent acceptOrder calls serialize at the DB; the
@@ -597,5 +612,60 @@ export class OrdersService {
     lon2: number,
   ): number {
     return haversineKm(lat1, lon1, lat2, lon2);
+  }
+
+  /**
+   * F2 lock-mode gate — refuses acceptance when the driver's active
+   * vehicle has a pending regulatory edit and
+   * VEHICLE_EDIT_GRACE_MODE=lock. No-op when the moduleRef isn't
+   * wired (legacy specs) or no active assignment exists.
+   *
+   * Resolution is lazy on purpose: VehicleAssignment + the pending
+   * updates service live in VehiclesModule, which OrdersModule does
+   * not statically import (avoiding another cycle). Using ModuleRef
+   * keeps the wiring contained to this single helper.
+   */
+  private async assertNoVehicleEditLock(driverId: string): Promise<void> {
+    if (!this.moduleRef) return;
+
+    type AssignmentRepo = {
+      findOne: (opts: unknown) => Promise<{ vehicleId: string } | null>;
+    };
+    type PendingService = {
+      checkAcceptanceBlock: (vehicleId: string) => Promise<string | null>;
+    };
+
+    let assignmentRepo: AssignmentRepo | null = null;
+    let pendingService: PendingService | null = null;
+    try {
+      assignmentRepo = this.moduleRef.get<AssignmentRepo>(
+        'VehicleAssignmentRepository' as never,
+        { strict: false },
+      );
+      pendingService = this.moduleRef.get<PendingService>(
+        'VehiclePendingUpdatesService' as never,
+        { strict: false },
+      );
+    } catch {
+      return;
+    }
+    if (!assignmentRepo || !pendingService) return;
+
+    const assignment = await assignmentRepo.findOne({
+      where: { driverId, unassignedAt: IsNull() },
+      order: { assignedAt: 'DESC' },
+    });
+    if (!assignment) return;
+
+    const block = await pendingService.checkAcceptanceBlock(
+      assignment.vehicleId,
+    );
+    if (block) {
+      throw new BadRequestException({
+        errorCode: block,
+        message:
+          'Vehicle change under review — you cannot accept orders until approved.',
+      });
+    }
   }
 }

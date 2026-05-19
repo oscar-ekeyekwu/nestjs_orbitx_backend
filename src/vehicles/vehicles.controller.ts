@@ -114,8 +114,13 @@ export class VehiclesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateVehicleDto,
   ) {
-    const vehicle = await this.vehiclesService.updateForUser(id, dto, user);
-    return toVehicleResponse(vehicle);
+    const result = await this.vehiclesService.updateForUser(id, dto, user);
+    // F2 — surface the fork signal so the mobile client can show
+    // "under review" copy instead of immediately reflecting the change.
+    return {
+      ...toVehicleResponse(result.vehicle),
+      pendingUpdate: result.forked,
+    };
   }
 
   @Patch(':id/status')

@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
@@ -93,6 +94,13 @@ export class VehiclesService {
     private readonly driverProfileRepo: Repository<DriverProfile>,
     private readonly dataSource: DataSource,
     private readonly approvalsService: ApprovalsService,
+    // F2 — optional so legacy tests that construct VehiclesService
+    // directly still pass without rewiring. Production DI always
+    // supplies the real service through VehiclesModule.
+    @Optional()
+    private readonly pendingUpdates?:
+      | import('./vehicle-pending-updates.service').VehiclePendingUpdatesService
+      | undefined,
   ) {}
 
   /**
@@ -250,30 +258,64 @@ export class VehiclesService {
   }
 
   /**
-   * F1 — owner self-service edit. Cosmetic fields (color, photoUrl) apply
-   * directly with no state change. Regulatory fields (plate, type) also
-   * apply directly today; F2 wraps this with the pending-update fork so
-   * an `approved` vehicle's regulatory edits are staged on a draft copy
-   * instead of mutating the live row.
+   * F1 + F2 — owner self-service edit.
    *
-   * Returns the updated entity. Caller ownership is verified via the
-   * existing `findByIdForUser` gate.
+   * - Cosmetic fields (color, photoUrl): always apply directly.
+   * - Regulatory fields (type, plate): when the vehicle is still in
+   *   draft / pending_approval / rejected, apply directly (the row
+   *   is not live yet). When the vehicle is approved / active, fork
+   *   into a vehicle_pending_updates row via the pending-updates
+   *   service so the production row keeps operating until an admin
+   *   signs off (F2 contract).
+   *
+   * Returns the live vehicle entity in both branches; the caller can
+   * inspect `pendingUpdate` on the response shape to detect the fork.
+   * Ownership verified via the existing `findByIdForUser` gate.
    */
   async updateForUser(
     id: string,
     dto: import('./dto/update-vehicle.dto').UpdateVehicleDto,
     caller: User,
-  ): Promise<Vehicle> {
+  ): Promise<{ vehicle: Vehicle; forked: boolean }> {
     const vehicle = await this.findByIdForUser(id, caller);
 
+    const hasRegulatoryChange =
+      (dto.type !== undefined && dto.type !== vehicle.type) ||
+      (dto.plate !== undefined && dto.plate.toUpperCase() !== vehicle.plate);
+    const isLive =
+      vehicle.status === VehicleStatus.APPROVED ||
+      vehicle.status === VehicleStatus.ACTIVE;
+
+    // Apply cosmetic fields directly regardless of live-state.
+    if (dto.color !== undefined) vehicle.color = dto.color;
+    if (dto.photoUrl !== undefined) vehicle.photoUrl = dto.photoUrl;
+
+    if (hasRegulatoryChange && isLive && this.pendingUpdates) {
+      // Fork — never mutate the live row. The matching production
+      // values stay in place until the admin approves the pending row.
+      await this.pendingUpdates.submitForVehicle(
+        vehicle.id,
+        {
+          type: dto.type !== vehicle.type ? dto.type : undefined,
+          plate:
+            dto.plate !== undefined && dto.plate.toUpperCase() !== vehicle.plate
+              ? dto.plate
+              : undefined,
+        },
+        caller,
+      );
+      // Persist the cosmetic deltas if any.
+      const saved = await this.vehicleRepo.save(vehicle);
+      return { vehicle: saved, forked: true };
+    }
+
+    // Non-live OR cosmetic-only — apply regulatory directly.
     if (dto.type !== undefined) vehicle.type = dto.type;
     if (dto.plate !== undefined) {
       vehicle.plate = dto.plate.toUpperCase();
     }
-    if (dto.color !== undefined) vehicle.color = dto.color;
-    if (dto.photoUrl !== undefined) vehicle.photoUrl = dto.photoUrl;
-
-    return this.vehicleRepo.save(vehicle);
+    const saved = await this.vehicleRepo.save(vehicle);
+    return { vehicle: saved, forked: false };
   }
 
   /**

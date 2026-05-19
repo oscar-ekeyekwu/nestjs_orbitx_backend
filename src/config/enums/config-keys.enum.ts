@@ -110,7 +110,7 @@ export const DEFAULT_CONFIG_VALUES: Record<
   [ConfigKey.VEHICLE_EDIT_GRACE_MODE]: {
     value: 'continue',
     description:
-      'How a vehicle behaves while an edit is awaiting admin review. "continue" = stays operational, "pending" = pulled from dispatch until approved. F3 (Sprint 4) reads this; B7 seeds the default.',
+      'How a vehicle behaves while an edit is awaiting admin review. "continue" = stays operational, "lock" = driver cannot accept orders (VEHICLE_002). Consumed by F2; F3 exposes the toggle in the admin console.',
     dataType: 'string',
   },
 };
