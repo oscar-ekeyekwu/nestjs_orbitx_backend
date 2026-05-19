@@ -11,6 +11,7 @@ import { WalletModule } from '../wallet/wallet.module';
 import { SystemConfigModule } from '../config/config.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { NotificationsModule } from '../notifications/notification.module';
+import { ReceiptsModule } from '../receipts/receipts.module';
 
 @Module({
   imports: [
@@ -25,6 +26,10 @@ import { NotificationsModule } from '../notifications/notification.module';
     // imports OrdersModule — without this, NotificationsModule resolves to
     // `undefined` here while it is still initializing further up the chain.
     forwardRef(() => NotificationsModule),
+    // E4 — receipt pipeline fires on DELIVERED. ReceiptsModule itself
+    // imports DocumentsModule + NotificationsModule, both unrelated to
+    // the orders/realtime cycle, so a direct import is safe here.
+    ReceiptsModule,
   ],
   controllers: [OrdersController, OrderShareController],
   providers: [OrdersService, OrderShareService],

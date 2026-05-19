@@ -111,6 +111,7 @@ describe('OrdersService.acceptOrder (ARCH-12 first-accept lock)', () => {
       configService as never,
       realtimeGateway as never,
       notifications as never,
+      { generateForOrder: jest.fn() } as never,
       dataSource as unknown as DataSource,
     );
   });
@@ -182,6 +183,7 @@ describe('OrdersService.acceptOrder (ARCH-12 first-accept lock)', () => {
       configService as never,
       realtimeGateway as never,
       notifications as never,
+      { generateForOrder: jest.fn() } as never,
       dataSource as unknown as DataSource,
     );
 

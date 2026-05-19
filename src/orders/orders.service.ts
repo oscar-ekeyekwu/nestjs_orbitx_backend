@@ -24,6 +24,7 @@ import {
 import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { NotificationsService } from '../notifications/notification.service';
+import { ReceiptsService } from '../receipts/receipts.service';
 import { User } from '../users/entities/user.entity';
 import Decimal from 'decimal.js';
 import { Naira, naira } from '../common/money';
@@ -43,6 +44,9 @@ export class OrdersService {
     // forms a cycle; the module import is also forwardRef'd in orders.module.ts.
     @Inject(forwardRef(() => NotificationsService))
     private notifications: NotificationsService,
+    // E4 — receipts pipeline. Best-effort fire on DELIVERED; failures
+    // are logged but never roll back the status transition.
+    private readonly receipts: ReceiptsService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -438,6 +442,12 @@ export class OrdersService {
         case OrderStatus.DELIVERED:
           await this.safeNotify('order_delivered', () =>
             this.notifications.notifyOrderDelivered(savedOrder, recipient),
+          );
+          // E4 — receipt is best-effort; if S3 / SMS / SMTP are down,
+          // the customer still gets the existing in-app delivery
+          // notification and an oncall reviewer can replay later.
+          await this.safeNotify('order_receipt', () =>
+            this.receipts.generateForOrder(savedOrder.id).then(() => undefined),
           );
           break;
         default:

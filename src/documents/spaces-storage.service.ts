@@ -123,15 +123,43 @@ export class SpacesStorageService {
     return `${endpoint.replace(/\/$/, '')}/${this.bucket}/${objectKey}`;
   }
 
-  /** Issues a presigned GET url with a 15-minute TTL (NFR-S2). */
-  async generateViewUrl(objectKey: string): Promise<string> {
+  /**
+   * Issues a presigned GET url. Defaults to the 15-minute KYC TTL
+   * (NFR-S2); callers like E4 receipts pass a longer custom TTL since
+   * the link is dispatched via SMS / email and the recipient may not
+   * tap it for hours.
+   */
+  async generateViewUrl(
+    objectKey: string,
+    ttlSeconds: number = VIEW_URL_TTL_SECONDS,
+  ): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: objectKey,
     });
     return getSignedUrl(this.client, command, {
-      expiresIn: VIEW_URL_TTL_SECONDS,
+      expiresIn: ttlSeconds,
     });
+  }
+
+  /**
+   * Direct server-side upload. Used by E4 receipt generation where the
+   * server renders the file (no client roundtrip) and stores it under a
+   * deterministic, non-uuid'd key (e.g. `receipts/<orderId>.pdf`).
+   */
+  async uploadBuffer(
+    objectKey: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<void> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: objectKey,
+        Body: body,
+        ContentType: contentType,
+      }),
+    );
   }
 
   /**

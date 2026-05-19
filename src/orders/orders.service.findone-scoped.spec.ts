@@ -29,6 +29,7 @@ describe('OrdersService.findOneScoped (E2 — auth gate)', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
   }
 
@@ -93,6 +94,7 @@ describe('OrdersService.findOneScoped (E2 — auth gate)', () => {
     >[0];
     const service = new OrdersService(
       ordersRepo as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

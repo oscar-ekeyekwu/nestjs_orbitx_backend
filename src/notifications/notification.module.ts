@@ -35,6 +35,8 @@ import { RealtimeModule } from '../realtime/realtime.module';
     PushFanoutService,
     // D4: InvitesService dispatches SMS via the shared sender.
     SmsService,
+    // E4: ReceiptsService dispatches the receipt link via email + SMS.
+    EmailService,
   ],
 })
 export class NotificationsModule {}
