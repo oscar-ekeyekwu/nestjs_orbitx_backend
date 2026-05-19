@@ -46,7 +46,10 @@ export const ErrorCodes = {
   DRIVER_001: 'DRIVER_NOT_FOUND',
   // ARCH-3 invalid status transition (e.g. attempting active → pending_approval).
   DRIVER_002: 'DRIVER_INVALID_STATUS_TRANSITION',
-  DRIVER_003: 'DRIVER_OFFLINE',
+  // B5: caller tried to go online without an active assignment to an
+  // approved vehicle. Surface message: "Your assigned vehicle is not
+  // currently approved." (The old DRIVER_OFFLINE label was unused.)
+  DRIVER_003: 'VEHICLE_NOT_APPROVED',
   DRIVER_004: 'DRIVER_NOT_AVAILABLE',
   DRIVER_005: 'INSUFFICIENT_DRIVER_BALANCE',
   DRIVER_006: 'DRIVER_NOT_VERIFIED',
@@ -61,11 +64,48 @@ export const ErrorCodes = {
   // ARCH-5: caller is outside the configured Lagos service bbox.
   ZONE_001: 'OUTSIDE_SERVICE_ZONE',
 
+  // Assignment errors (ASSIGNMENT_xxx)
+  // B4: another active vehicle_assignments row already exists for the
+  // (vehicle, driver) the caller is trying to assign. Surfaces the
+  // Postgres unique-partial-index violation as a clean 409.
+  ASSIGNMENT_001: 'DUPLICATE_ACTIVE_ASSIGNMENT',
+
+  // Membership errors (MEMBERSHIP_xxx)
+  // B4: the driver isn't an approved member of the company, or the
+  // caller isn't authorized to manage the company's memberships.
+  MEMBERSHIP_001: 'NOT_A_COMPANY_MEMBER',
+
   // File upload errors (FILE_xxx)
-  FILE_001: 'FILE_TOO_LARGE',
-  FILE_002: 'INVALID_FILE_TYPE',
+  // C1: caller asked for a presigned upload-url (or a /documents POST)
+  // with a MIME outside the Spaces allowlist (image/jpeg, image/png,
+  // application/pdf). Multer's local /uploads/* path also uses this
+  // slot for MIME-filter rejections.
+  FILE_001: 'INVALID_FILE_TYPE',
+  // C1: client POSTed metadata claiming an upload landed at a given
+  // objectKey, but a HEAD against Spaces returned 404 — the upload
+  // never completed (or used a stale presigned url). Client should
+  // request a fresh upload-url and retry.
+  FILE_002: 'STORAGE_OBJECT_NOT_FOUND',
   FILE_003: 'UPLOAD_FAILED',
   FILE_004: 'FILE_NOT_FOUND',
+  FILE_005: 'FILE_TOO_LARGE',
+
+  // Invite errors (INVITE_xxx)
+  // D4: driver_invites token validation failures. Surfaced from
+  // AuthService.register and InvitesService.redeem alike.
+  INVITE_001: 'INVITE_EXPIRED',
+  INVITE_002: 'INVITE_ALREADY_USED',
+  INVITE_003: 'INVITE_INVALID',
+
+  // Document errors (DOCUMENT_xxx)
+  // C2: expiry-date document type (driver_license / insurance /
+  // roadworthy etc.) was POSTed without an expiryDate. The caller
+  // must re-submit with the document's expiry filled in.
+  DOCUMENT_001: 'EXPIRY_REQUIRED',
+  // C2: the supplied (ownerType, ownerId) pair does not resolve to
+  // a real user / vehicle / company. Polymorphic owner lookup via
+  // loadOwner (ARCH-4) returns null.
+  DOCUMENT_002: 'INVALID_OWNER_REF',
 
   // Validation errors (VAL_xxx)
   VAL_001: 'VALIDATION_FAILED',

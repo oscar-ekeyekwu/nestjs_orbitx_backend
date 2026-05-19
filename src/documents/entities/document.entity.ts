@@ -19,7 +19,8 @@ export enum DocumentOwnerType {
 /**
  * Catalog of document types accepted by KYC + compliance flows. New types
  * land here only after a regulator citation (NDPA, LASAA, NIPOST, FRSC,
- * CBN) — see PRD §DR table.
+ * CBN) — see PRD §DR table. C2 added gov_id / director_id / selfie to
+ * cover the company director + facial-match flows.
  */
 export enum DocumentType {
   DRIVERS_LICENSE = 'drivers_license',
@@ -32,6 +33,9 @@ export enum DocumentType {
   NIPOST_LICENSE = 'nipost_license',
   CAC_CERTIFICATE = 'cac_certificate',
   TIN_CERTIFICATE = 'tin_certificate',
+  GOV_ID = 'gov_id',
+  DIRECTOR_ID = 'director_id',
+  SELFIE = 'selfie',
 }
 
 export enum DocumentStatus {
@@ -88,6 +92,24 @@ export class Document {
   @JoinColumn({ name: 'uploadedBy' })
   uploader: User;
 
+  // C2: review trail. Populated when an admin approves or rejects the
+  // document in C5. Always null while status='pending'.
+  @Column({ type: 'timestamp', nullable: true })
+  reviewedAt: Date | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  reviewedBy: string | null;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'reviewedBy' })
+  reviewer: User | null;
+
+  @Column({ type: 'text', nullable: true })
+  rejectionReason: string | null;
+
+  // `createdAt` is the upload time per C2 AC ("uploaded_at=now()").
+  // Kept under the camelCase TypeORM convention so the JSON envelope
+  // stays consistent with the rest of the API.
   @CreateDateColumn()
   createdAt: Date;
 

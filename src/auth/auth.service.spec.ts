@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { DriversService } from '../drivers/drivers.service';
 import { EmailService } from '../email/email.service';
+import { InvitesService } from '../invites/invites.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RegisterDto } from './dto/register.dto';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -78,6 +79,17 @@ describe('AuthService.register (A3 — transactional driver profile creation)', 
         {
           provide: getRepositoryToken(RefreshToken),
           useValue: refreshTokenRepo,
+        },
+        // D4: AuthService now optionally redeems an invite. Existing
+        // tests don't pass an inviteToken so this stays an inert mock;
+        // the dedicated InvitesService spec covers the redeem path.
+        {
+          provide: InvitesService,
+          useValue: {
+            redeemInTransaction: jest.fn(),
+            createInvite: jest.fn(),
+            listForCompany: jest.fn(),
+          },
         },
       ],
     }).compile();

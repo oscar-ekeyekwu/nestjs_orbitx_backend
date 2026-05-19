@@ -50,11 +50,23 @@ async function seedV1() {
   }
 }
 
-async function seedAdminUser(dataSource: DataSource): Promise<void> {
+export async function seedAdminUser(dataSource: DataSource): Promise<void> {
+  const usingDefaultEmail = !process.env.ADMIN_EMAIL;
+  const usingDefaultPassword = !process.env.ADMIN_PASSWORD;
   const email = process.env.ADMIN_EMAIL || 'admin@orbitx.com';
   const password = process.env.ADMIN_PASSWORD || 'Admin@123456';
   const firstName = process.env.ADMIN_FIRST_NAME || 'Admin';
   const lastName = process.env.ADMIN_LAST_NAME || 'User';
+
+  if (usingDefaultEmail || usingDefaultPassword) {
+    // B7 AC: warn if defaults are used — these credentials are well-
+    // known and absolutely must not survive past dev / staging.
+    console.warn(
+      '⚠️  [seed-v1] Using DEFAULT admin credentials. Set ADMIN_EMAIL and ' +
+        'ADMIN_PASSWORD in the environment before deploying anywhere a real ' +
+        'user could reach. Defaults: admin@orbitx.com / Admin@123456.',
+    );
+  }
 
   const userRepo = dataSource.getRepository(User);
   const existing = await userRepo.findOne({ where: { email } });
@@ -85,7 +97,7 @@ async function seedAdminUser(dataSource: DataSource): Promise<void> {
   console.log(`✅ [seed-v1] Admin user created: ${email}`);
 }
 
-async function seedSystemConfigs(dataSource: DataSource): Promise<void> {
+export async function seedSystemConfigs(dataSource: DataSource): Promise<void> {
   const repo = dataSource.getRepository(SystemConfig);
   let created = 0;
   let updated = 0;
@@ -126,4 +138,9 @@ async function seedSystemConfigs(dataSource: DataSource): Promise<void> {
   );
 }
 
-void seedV1();
+// Only run the seed when this file is executed directly (e.g.
+// `npm run seed:v1`). Importing it from a test file should NOT
+// trigger a real database connection.
+if (require.main === module) {
+  void seedV1();
+}

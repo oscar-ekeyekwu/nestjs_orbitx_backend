@@ -5,6 +5,52 @@ the OrbitX backend. The app itself is a NestJS service deployed onto a
 single Ubuntu host via `docker compose`; this README captures the parts
 that aren't in the application code.
 
+## Fresh environment reset (B7)
+
+For pre-launch dev / staging environments — wipe everything and land
+back at v1 baseline.
+
+```bash
+# 1. Drop the public schema (every table, enum, sequence, index). The
+#    FORCE_DB_RESET=true guard is a two-factor against accidental
+#    runs against a dev machine pointed at staging.
+FORCE_DB_RESET=true npm run db:reset
+
+# 2. Run all migrations forward — InitialV1Migration creates the v1
+#    schema; the follow-ups (drop inline vehicle columns, rename
+#    membership status) apply in order.
+npm run migration:run
+
+# 3. Seed the baseline rows: admin user (from ADMIN_EMAIL +
+#    ADMIN_PASSWORD env vars; warns if defaults), system_configs
+#    (pricing, USE_MAP_VIEW, VEHICLE_EDIT_GRACE_MODE, LAGOS_SERVICE_BBOX).
+#    Idempotent — re-running is safe and won't overwrite admin-tuned
+#    config values.
+npm run seed:v1
+```
+
+`db:reset` refuses to run with `NODE_ENV=production`. Production-side
+resets are a separate runbook (not in this repo) and must be reviewed
+manually.
+
+## Post-migration verification
+
+The deploy workflow runs `migration:run || true`, which is a known
+silent-failure footgun (project-context.md). After every deploy, eyeball
+the migrations log AND confirm the latest migration landed by running:
+
+```bash
+psql -U orbit_app -d orbitx -c \
+  "SELECT name FROM migrations ORDER BY timestamp DESC LIMIT 5;"
+```
+
+The most recent entry should match the newest file in
+`src/database/migrations/`. If it doesn't, the deploy silently dropped
+a migration and the app is running against a stale schema — investigate
+before letting traffic flow.
+
+A scripted version of this check lives as a future story (D-or-J track).
+
 ## Postgres role split (ARCH-7 — audit immutability)
 
 `approval_decisions` and `transactions` are append-only at the database

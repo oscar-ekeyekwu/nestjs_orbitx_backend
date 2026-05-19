@@ -1,0 +1,112 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { DocumentsService } from './documents.service';
+import { GetUploadUrlDto } from './dto/get-upload-url.dto';
+import { CreateDocumentDto } from './dto/create-document.dto';
+import { ListDocumentsDto } from './dto/list-documents.dto';
+import { ReviewDocumentDto } from './dto/review-document.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '../common/enums/user-role.enum';
+
+@ApiTags('Documents')
+@ApiBearerAuth()
+@Controller('documents')
+@UseGuards(JwtAuthGuard)
+export class DocumentsController {
+  constructor(private readonly documentsService: DocumentsService) {}
+
+  @Post('upload-url')
+  @HttpCode(HttpStatus.OK)
+  // NFR-S6 / ARCH-11 follow-up: 10 upload-url requests per minute per
+  // IP. Tight to discourage script-driven URL minting; loose enough
+  // for a real user retrying a stalled upload.
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiOperation({
+    summary:
+      'Issue a 5-minute presigned PUT URL for a KYC document upload (ARCH-9).',
+  })
+  async getUploadUrl(@CurrentUser() user: User, @Body() dto: GetUploadUrlDto) {
+    return this.documentsService.generateUploadUrl(dto, user);
+  }
+
+  @Post()
+  // C1: persist the Document row only after HEAD-verifying that the
+  // client actually completed the upload. Tighter throttle than the
+  // upload-url issuer because each call hits Spaces.
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  @ApiOperation({
+    summary:
+      'Persist the Document metadata row after a successful upload. HEAD-verifies the object exists in Spaces before writing.',
+  })
+  async createDocument(
+    @CurrentUser() user: User,
+    @Body() dto: CreateDocumentDto,
+  ) {
+    return this.documentsService.createDocument(dto, user);
+  }
+
+  @Get()
+  @ApiOperation({
+    summary:
+      'List documents. Admin sees all (filterable by ownerType/ownerId/type/status). Non-admin callers are scoped to their own (ownerType=user, ownerId=self).',
+  })
+  async list(@CurrentUser() user: User, @Query() filters: ListDocumentsDto) {
+    return this.documentsService.listDocuments(filters, user);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary:
+      'Fetch a single document. Admin can read any; non-admin callers can only read documents they own.',
+  })
+  async findOne(
+    @CurrentUser() user: User,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.documentsService.findOne(id, user);
+  }
+
+  @Patch(':id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary:
+      'Admin reviews a pending document. Body: { status: approved | rejected, reason? }. Writes an approval_decisions audit row in the same transaction; on approve, fires the C4 recovery hook to lift a docs-expired suspension if no other expired docs remain.',
+  })
+  async review(
+    @CurrentUser() user: User,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReviewDocumentDto,
+  ) {
+    return this.documentsService.reviewDocument(id, dto, user);
+  }
+
+  @Get(':id/view-url')
+  @ApiOperation({
+    summary:
+      'Issue a 15-minute presigned GET URL for an existing document (ARCH-9 + NFR-S2).',
+  })
+  async getViewUrl(
+    @CurrentUser() user: User,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.documentsService.generateViewUrl(id, user);
+  }
+}

@@ -4,6 +4,8 @@ import {
   ConfigService,
 } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -20,6 +22,11 @@ import { FaqsModule } from './faqs/faqs.module';
 import { PaymentModule } from './payment/payment.module';
 import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
+import { CompaniesModule } from './companies/companies.module';
+import { VehiclesModule } from './vehicles/vehicles.module';
+import { DocumentsModule } from './documents/documents.module';
+import { ApprovalsModule } from './approvals/approvals.module';
+import { InvitesModule } from './invites/invites.module';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -44,6 +51,17 @@ import { SupportModule } from './support/support.module';
       },
       inject: [ConfigService],
     }),
+    // C4: daily document-expiry sweep runs out of @nestjs/schedule.
+    // EventEmitterModule lets the cron fan out structured events that
+    // ARCH-10 (push) + future email/SMS wiring can subscribe to.
+    ScheduleModule.forRoot(),
+    EventEmitterModule.forRoot({
+      // Wildcard listeners (e.g. `document.*`) need this enabled so the
+      // notifications wiring can subscribe broadly without enumerating
+      // every concrete event name.
+      wildcard: true,
+      delimiter: '.',
+    }),
     // TypeORM is wired in DatabaseModule (imported below) with a glob
     // entity discovery — single source of truth. Do NOT add a second
     // TypeOrmModule.forRootAsync here; the explicit entity list that
@@ -66,6 +84,11 @@ import { SupportModule } from './support/support.module';
     PaymentModule,
     AdminModule,
     SupportModule,
+    CompaniesModule,
+    VehiclesModule,
+    DocumentsModule,
+    ApprovalsModule,
+    InvitesModule,
   ],
   controllers: [],
   providers: [

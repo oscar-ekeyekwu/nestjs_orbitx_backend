@@ -28,7 +28,7 @@ function makeImageFileFilter(mimePattern: RegExp, message: string) {
       cb(
         new BadRequestException({
           message,
-          errorCode: ErrorCodes.FILE_002,
+          errorCode: ErrorCodes.FILE_001,
         }),
         false,
       );

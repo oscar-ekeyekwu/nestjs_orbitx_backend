@@ -240,6 +240,81 @@ export class RealtimeGateway
     });
   }
 
+  // --------------------------------------------------------------------------
+  // ARCH-12 — eligible-driver room semantics
+  // --------------------------------------------------------------------------
+
+  /**
+   * Build the deterministic room name used for order-offered broadcasts.
+   * Keyed on the package size so a motorcycle-only driver never sees
+   * truck-sized orders. Region is hard-coded to `lagos` in v1; v1.1
+   * widens this when the second city ships.
+   */
+  static eligibleRoom(packageSize: string): string {
+    return `drivers:eligible:lagos:${packageSize}`;
+  }
+
+  /**
+   * ARCH-12 — when a driver flips isOnline=true their currently-connected
+   * socket joins the rooms matching their vehicle's capacity. Returns
+   * the rooms actually joined (useful for logging + tests).
+   */
+  joinDriverToEligibleRooms(
+    userId: string,
+    packageSizes: readonly string[],
+  ): string[] {
+    const socketId = this.userSockets.get(userId);
+    if (!socketId) return [];
+    const socket = this.server.sockets.sockets.get(socketId);
+    if (!socket) return [];
+    const rooms = packageSizes.map((s) => RealtimeGateway.eligibleRoom(s));
+    rooms.forEach((room) => void socket.join(room));
+    return rooms;
+  }
+
+  /**
+   * ARCH-12 — when a driver flips isOnline=false (or disconnects). Leaves
+   * every eligible-room the socket is currently in.
+   */
+  leaveDriverFromEligibleRooms(userId: string): string[] {
+    const socketId = this.userSockets.get(userId);
+    if (!socketId) return [];
+    const socket = this.server.sockets.sockets.get(socketId);
+    if (!socket) return [];
+    const eligibleRooms = [...socket.rooms].filter((r) =>
+      r.startsWith('drivers:eligible:lagos:'),
+    );
+    eligibleRooms.forEach((room) => void socket.leave(room));
+    return eligibleRooms;
+  }
+
+  /**
+   * ARCH-12 — fan out a freshly-created order to every driver in the
+   * matching eligible room. Returns the room name for logging.
+   */
+  emitOrderOffered(packageSize: string, order: object): string {
+    const room = RealtimeGateway.eligibleRoom(packageSize);
+    this.server.to(room).emit('order_offered', {
+      order,
+      timestamp: new Date().toISOString(),
+    });
+    return room;
+  }
+
+  /**
+   * ARCH-12 — fan out an order_taken event to the same room so the
+   * losing drivers' UIs drop the order from their available list. Sent
+   * alongside the customer's `order_accepted` event from acceptOrder.
+   */
+  emitOrderTaken(packageSize: string, orderId: string): string {
+    const room = RealtimeGateway.eligibleRoom(packageSize);
+    this.server.to(room).emit('order_taken', {
+      orderId,
+      timestamp: new Date().toISOString(),
+    });
+    return room;
+  }
+
   emitOrderAccepted(orderId: string, customerId: string, driver: object): void {
     this.emitToUser(customerId, 'order_accepted', { orderId, driver });
   }
