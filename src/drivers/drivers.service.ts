@@ -12,6 +12,7 @@ import { packageSizesForVehicle } from '../orders/package-size.helper';
 // avoid the circular dep between drivers/realtime modules.
 import type { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
+  DriverAccountType,
   DriverProfile,
   DriverVerificationStatus,
 } from './entities/driver-profile.entity';
@@ -228,6 +229,7 @@ export class DriversService {
   async createProfile(
     userId: string,
     manager?: EntityManager,
+    accountType?: DriverAccountType,
   ): Promise<DriverProfile> {
     // Optional EntityManager so callers (e.g. AuthService during driver
     // registration) can include this insert in their own transaction.
@@ -241,7 +243,10 @@ export class DriversService {
       return existingProfile;
     }
 
-    const profile = repo.create({ userId });
+    const profile = repo.create({
+      userId,
+      ...(accountType ? { accountType } : {}),
+    });
     return repo.save(profile);
   }
 

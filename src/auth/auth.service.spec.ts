@@ -11,6 +11,7 @@ import { InvitesService } from '../invites/invites.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RegisterDto } from './dto/register.dto';
 import { UserRole } from '../common/enums/user-role.enum';
+import { DriverAccountType } from '../drivers/entities/driver-profile.entity';
 
 describe('AuthService.register (A3 — transactional driver profile creation)', () => {
   let service: AuthService;
@@ -127,7 +128,41 @@ describe('AuthService.register (A3 — transactional driver profile creation)', 
     expect(driversService.createProfile).toHaveBeenCalledWith(
       'user-1',
       fakeManager,
+      undefined,
     );
+  });
+
+  it('forwards accountType=company_owner from register DTO to createProfile', async () => {
+    await service.register({
+      email: 'owner@test.com',
+      password: 'pw',
+      first_name: 'O',
+      last_name: 'Wner',
+      role: UserRole.DRIVER,
+      accountType: DriverAccountType.COMPANY_OWNER,
+    } as RegisterDto);
+
+    expect(driversService.createProfile).toHaveBeenCalledWith(
+      'user-1',
+      fakeManager,
+      DriverAccountType.COMPANY_OWNER,
+    );
+  });
+
+  it('rejects accountType=company_employee outside of the invite flow', async () => {
+    await expect(
+      service.register({
+        email: 'sneaky@test.com',
+        password: 'pw',
+        first_name: 'S',
+        last_name: 'Neaky',
+        role: UserRole.DRIVER,
+        accountType: DriverAccountType.COMPANY_EMPLOYEE,
+      } as RegisterDto),
+    ).rejects.toThrow(/company_employee/);
+
+    expect(usersService.create).not.toHaveBeenCalled();
+    expect(driversService.createProfile).not.toHaveBeenCalled();
   });
 
   it('does NOT create a DriverProfile for customer-role registrations', async () => {

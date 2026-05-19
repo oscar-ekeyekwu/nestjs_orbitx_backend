@@ -67,6 +67,18 @@ export class AuthService {
       dtoForUser.role = UserRole.DRIVER;
     }
 
+    // The register screen offers individual + company_owner; the employee
+    // bucket is reserved for the invite flow (set server-side). Reject
+    // an attempt to self-elect company_employee outside of that path.
+    if (
+      !inviteToken &&
+      registerDto.accountType === DriverAccountType.COMPANY_EMPLOYEE
+    ) {
+      throw new BadRequestException(
+        'company_employee accountType is only valid via an invite token',
+      );
+    }
+
     const user = await this.dataSource.transaction(async (manager) => {
       const newUser = await this.usersService.create(dtoForUser, manager);
 
@@ -97,7 +109,11 @@ export class AuthService {
           status: CompanyMembershipStatus.PENDING,
         });
       } else if (newUser.role === UserRole.DRIVER) {
-        await this.driversService.createProfile(newUser.id, manager);
+        await this.driversService.createProfile(
+          newUser.id,
+          manager,
+          registerDto.accountType,
+        );
       }
       return newUser;
     });
