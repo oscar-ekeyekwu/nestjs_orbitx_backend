@@ -48,6 +48,23 @@ export class DriversController {
     return this.driversService.transitionVerification(id, dto, user);
   }
 
+  // D2 — driver self-submits their setup for admin review.
+  // Resolves the calling user → driver_profile → setup_required →
+  // pending_approval via DriversService.submitForApproval. NULL
+  // reviewerId on the audit row (system sentinel).
+  @Post('profile/submit')
+  async submitProfileForApproval(@CurrentUser() user: User) {
+    const profile = await this.driversService.findByUserId(user.id);
+    if (!profile) {
+      // Auto-create + immediately submit, mirroring updateOnlineStatus's
+      // backfill path. A driver registering through Auth always lands
+      // with a profile, so this only fires for pre-A3 legacy users.
+      const created = await this.driversService.createProfile(user.id);
+      return this.driversService.submitForApproval(created.id);
+    }
+    return this.driversService.submitForApproval(profile.id);
+  }
+
   @Get('profile')
   getProfile(@CurrentUser() user: User) {
     return this.driversService.findByUserId(user.id);
