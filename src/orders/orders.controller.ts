@@ -99,6 +99,18 @@ export class OrdersController {
     return this.ordersService.cancelOrder(id, user.id, user.role);
   }
 
+  // G2 — driver confirms they collected cash on a delivered order.
+  // Settles the driver's wallet (fee net of commission), inserts a
+  // Transaction row, flips order.paymentStatus to completed. Idempotent.
+  @Post(':id/mark-paid')
+  @Roles(UserRole.DRIVER)
+  @ApiOperation({
+    summary: 'Mark a delivered cash-on-delivery order as paid (driver only).',
+  })
+  markCashCollected(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.ordersService.markCashCollected(id, user.id);
+  }
+
   // E3 — customer mints a share token for the recipient. Idempotent;
   // a second call for the same order returns the same token.
   @Post(':id/share-token')

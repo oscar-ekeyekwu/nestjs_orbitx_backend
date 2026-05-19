@@ -10,6 +10,7 @@ import {
 import { User } from '../../users/entities/user.entity';
 import type { Naira } from '../../common/money';
 import { nairaTransformer } from '../../common/money';
+import { PaymentMethod } from '../../wallet/entities/transaction.entity';
 
 export enum OrderStatus {
   PENDING = 'pending',
@@ -24,6 +25,22 @@ export enum PackageSize {
   SMALL = 'small',
   MEDIUM = 'medium',
   LARGE = 'large',
+}
+
+/**
+ * G2 — order-level payment lifecycle.
+ *
+ * pending_cash: customer chose cash; driver has not yet collected.
+ * pending     : Paystack / bank transfer awaiting webhook confirmation.
+ * completed   : money received (in driver wallet for cash, in customer
+ *               wallet for Paystack — see ARCH-13 settlement).
+ * failed      : payment unrecoverable. Order admin reconcile.
+ */
+export enum OrderPaymentStatus {
+  PENDING = 'pending',
+  PENDING_CASH = 'pending_cash',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
 }
 
 @Entity('orders')
@@ -113,6 +130,23 @@ export class Order {
     transformer: nairaTransformer,
   })
   finalPrice: Naira | null;
+
+  // G2 — chosen payment channel (defaults to cash since v0 implicitly
+  // assumed cash on delivery). Updated server-side from CreateOrderDto.
+  @Column({
+    type: 'enum',
+    enum: PaymentMethod,
+    default: PaymentMethod.CASH,
+  })
+  paymentMethod: PaymentMethod;
+
+  @Column({
+    type: 'enum',
+    enum: OrderPaymentStatus,
+    enumName: 'order_payment_status_enum',
+    default: OrderPaymentStatus.PENDING_CASH,
+  })
+  paymentStatus: OrderPaymentStatus;
 
   // Timestamps
   @Column({ type: 'timestamp', nullable: true })

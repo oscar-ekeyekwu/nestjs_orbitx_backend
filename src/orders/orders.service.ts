@@ -10,7 +10,12 @@ import {
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Repository } from 'typeorm';
-import { Order, OrderStatus, PackageSize } from './entities/order.entity';
+import {
+  Order,
+  OrderPaymentStatus,
+  OrderStatus,
+  PackageSize,
+} from './entities/order.entity';
 import { ErrorCodes } from '../common/constants/error-codes';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -18,7 +23,13 @@ import { UserRole } from '../common/enums/user-role.enum';
 import { WalletService } from '../wallet/wallet.service';
 import { SystemConfigService } from '../config/config.service';
 import { ConfigKey } from '../config/enums/config-keys.enum';
-import { PaymentMethod } from '../wallet/entities/transaction.entity';
+import {
+  PaymentMethod,
+  Transaction,
+  TransactionStatus,
+  TransactionType,
+} from '../wallet/entities/transaction.entity';
+import { Wallet } from '../wallet/entities/wallet.entity';
 import {
   PaginatedResult,
   createPaginatedResponse,
@@ -112,11 +123,24 @@ export class OrdersService {
       createOrderDto.packageSize,
     );
 
+    // G2 — payment method ships as part of the create DTO; default to
+    // CASH so v0 clients (which don't send the field) keep working.
+    // Status of CASH starts at `pending_cash` (driver still has to
+    // collect); every other channel starts at `pending` (awaiting
+    // webhook / verification).
+    const paymentMethod = createOrderDto.paymentMethod ?? PaymentMethod.CASH;
+    const paymentStatus =
+      paymentMethod === PaymentMethod.CASH
+        ? OrderPaymentStatus.PENDING_CASH
+        : OrderPaymentStatus.PENDING;
+
     const order = this.ordersRepository.create({
       ...createOrderDto,
       customerId,
       estimatedPrice,
       status: OrderStatus.PENDING,
+      paymentMethod,
+      paymentStatus,
     });
 
     const savedOrder = await this.ordersRepository.save(order);
@@ -471,6 +495,91 @@ export class OrdersService {
     }
 
     return savedOrder;
+  }
+
+  /**
+   * G2 — driver confirms cash payment received on a delivered order.
+   *
+   *  - Validates the order belongs to this driver + the channel is
+   *    cash + the order is delivered + payment is still pending.
+   *  - Settles in one transaction: inserts a Transaction row (method
+   *    cash) for the gross fee, credits the driver's wallet net of
+   *    commission, leaves the commission as the platform's share.
+   *  - Idempotent: a second call after settlement returns the order
+   *    unchanged with paymentStatus already COMPLETED.
+   */
+  async markCashCollected(orderId: string, driverId: string): Promise<Order> {
+    const commissionPct = await this.configService.getNumber(
+      ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
+      0,
+    );
+
+    return this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id: orderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) {
+        throw new NotFoundException('Order not found');
+      }
+      if (order.driverId !== driverId) {
+        throw new ForbiddenException(
+          'Only the assigned driver can mark cash collected.',
+        );
+      }
+      if (order.paymentMethod !== PaymentMethod.CASH) {
+        throw new BadRequestException(
+          'Cash collection only applies to cash-on-delivery orders.',
+        );
+      }
+      if (order.status !== OrderStatus.DELIVERED) {
+        throw new BadRequestException(
+          'Mark the order as delivered before settling cash.',
+        );
+      }
+      if (order.paymentStatus === OrderPaymentStatus.COMPLETED) {
+        // Idempotent: replay returns the existing settled state.
+        return order;
+      }
+      if (order.paymentStatus !== OrderPaymentStatus.PENDING_CASH) {
+        throw new BadRequestException(
+          `Cannot collect cash on a ${order.paymentStatus} order.`,
+        );
+      }
+
+      const fee = order.finalPrice ?? order.estimatedPrice;
+      const commission = fee.times(commissionPct).dividedBy(100) as Naira;
+      const driverShare = fee.minus(commission) as Naira;
+
+      const driverWallet = await manager.findOne(Wallet, {
+        where: { userId: driverId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!driverWallet) {
+        throw new NotFoundException('Driver wallet not provisioned.');
+      }
+      driverWallet.balance = driverWallet.balance.plus(driverShare) as Naira;
+      driverWallet.totalEarnings = driverWallet.totalEarnings.plus(
+        driverShare,
+      ) as Naira;
+      await manager.save(driverWallet);
+
+      await manager.insert(Transaction, {
+        walletId: driverWallet.id,
+        orderId: order.id,
+        type: TransactionType.CREDIT,
+        amount: driverShare,
+        commission,
+        balanceAfter: driverWallet.balance,
+        status: TransactionStatus.COMPLETED,
+        paymentMethod: PaymentMethod.CASH,
+        description: `Cash collection for order ${order.id}`,
+      });
+
+      order.paymentStatus = OrderPaymentStatus.COMPLETED;
+      order.finalPrice = fee;
+      return manager.save(order);
+    });
   }
 
   async updateDriverLocation(
