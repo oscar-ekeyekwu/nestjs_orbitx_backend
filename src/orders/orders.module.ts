@@ -2,7 +2,10 @@ import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
+import { OrderShareService } from './order-share.service';
+import { OrderShareController } from './order-share.controller';
 import { Order } from './entities/order.entity';
+import { OrderShareToken } from './entities/order-share-token.entity';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { SystemConfigModule } from '../config/config.module';
@@ -11,7 +14,7 @@ import { NotificationsModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order]),
+    TypeOrmModule.forFeature([Order, OrderShareToken]),
     UsersModule,
     WalletModule,
     SystemConfigModule,
@@ -23,8 +26,8 @@ import { NotificationsModule } from '../notifications/notification.module';
     // `undefined` here while it is still initializing further up the chain.
     forwardRef(() => NotificationsModule),
   ],
-  controllers: [OrdersController],
-  providers: [OrdersService],
+  controllers: [OrdersController, OrderShareController],
+  providers: [OrdersService, OrderShareService],
   exports: [OrdersService],
 })
 export class OrdersModule {}

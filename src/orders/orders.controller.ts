@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
+import { OrderShareService } from './order-share.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -25,7 +26,10 @@ import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly orderShareService: OrderShareService,
+  ) {}
 
   @Post()
   @Roles(UserRole.CUSTOMER)
@@ -93,5 +97,16 @@ export class OrdersController {
   @Post(':id/cancel')
   cancelOrder(@Param('id') id: string, @CurrentUser() user: User) {
     return this.ordersService.cancelOrder(id, user.id, user.role);
+  }
+
+  // E3 — customer mints a share token for the recipient. Idempotent;
+  // a second call for the same order returns the same token.
+  @Post(':id/share-token')
+  @Roles(UserRole.CUSTOMER)
+  @ApiOperation({
+    summary: 'Create or reuse a public share token (Customer only)',
+  })
+  createShareToken(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.orderShareService.issueToken(id, user.id);
   }
 }
