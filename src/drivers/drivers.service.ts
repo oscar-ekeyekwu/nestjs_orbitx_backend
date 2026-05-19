@@ -91,15 +91,26 @@ export class DriversService {
   ) {}
 
   /**
-   * C5 — admin moves a driver through driverStateMachine. Wraps the
-   * state-machine assertion + row write + approval_decisions insert
-   * in a single transaction so the audit ledger and the live status
-   * can never disagree (the canonical ARCH-3 pattern).
+   * C5 / D1 — single state-change entry point for driver_profiles.
+   * verification_status. Wraps the state-machine assertion + row
+   * write + approval_decisions insert in a single transaction so
+   * the audit ledger and the live status can never disagree (the
+   * canonical ARCH-3 pattern).
+   *
+   * `caller` is the admin issuing the change; pass `null` for
+   * system-driven transitions (cron suspensions, auto-pending on
+   * setup completion). The approval_decisions row then records
+   * reviewerId=NULL — the documented system sentinel.
+   *
+   * D1 — chained transition: `pending_approval → approved` auto-
+   * promotes to `active` in the same transaction. The audit
+   * records ONE row (action=APPROVE) per arch §1.2; the second
+   * edge is purely operational state.
    */
   async transitionVerification(
     driverId: string,
     dto: UpdateDriverVerificationDto,
-    caller: User,
+    caller: User | null,
   ): Promise<DriverProfile> {
     const reviewed = await this.dataSource.transaction(async (manager) => {
       const profile = await manager.findOne(DriverProfile, {
@@ -133,9 +144,25 @@ export class DriversService {
         targetType: ApprovalTargetType.DRIVER,
         targetId: profile.id,
         action: approvalActionForDriver(previousStatus, dto.status),
-        reviewerId: caller.id,
+        reviewerId: caller?.id ?? null,
         reason: dto.reason,
       });
+
+      // D1 chained transition: approved → active. State machine
+      // declares the edge so assertTransition succeeds; we don't
+      // write a second audit row (arch §1.2: admin sees one).
+      if (
+        previousStatus === DriverVerificationStatus.PENDING_APPROVAL &&
+        profile.verificationStatus === DriverVerificationStatus.APPROVED
+      ) {
+        driverStateMachine.assertTransition(
+          DriverVerificationStatus.APPROVED,
+          DriverVerificationStatus.ACTIVE,
+          ErrorCodes.DRIVER_002,
+        );
+        profile.verificationStatus = DriverVerificationStatus.ACTIVE;
+        await manager.save(profile);
+      }
 
       return profile;
     });
@@ -158,6 +185,23 @@ export class DriversService {
     }
 
     return reviewed;
+  }
+
+  /**
+   * D1 — system-driven submit: setup_required → pending_approval.
+   * Called when the driver's setup wizard completes (D2). Recorded
+   * in approval_decisions with reviewerId=NULL (system sentinel).
+   *
+   * Idempotent under the lock: if the driver is already in
+   * pending_approval (e.g. duplicate wizard submit), the state
+   * machine throws DRIVER_002 and the caller can swallow it.
+   */
+  async submitForApproval(driverId: string): Promise<DriverProfile> {
+    return this.transitionVerification(
+      driverId,
+      { status: DriverVerificationStatus.PENDING_APPROVAL },
+      null,
+    );
   }
 
   /**

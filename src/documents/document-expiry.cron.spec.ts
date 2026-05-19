@@ -15,6 +15,7 @@ import {
 } from '../drivers/entities/driver-profile.entity';
 import { Vehicle, VehicleStatus } from '../vehicles/entities/vehicle.entity';
 import { Company, CompanyStatus } from '../companies/entities/company.entity';
+import { DriversService } from '../drivers/drivers.service';
 
 function buildDoc(overrides: Partial<Document>): Document {
   return {
@@ -58,6 +59,9 @@ describe('DocumentExpiryCron (C4)', () => {
   let vehicleRepo: jest.Mocked<Repository<Vehicle>>;
   let companyRepo: jest.Mocked<Repository<Company>>;
   let events: jest.Mocked<EventEmitter2>;
+  let driversService: {
+    transitionVerification: jest.Mock;
+  };
   let cron: DocumentExpiryCron;
 
   beforeEach(() => {
@@ -87,12 +91,51 @@ describe('DocumentExpiryCron (C4)', () => {
       emit: jest.fn().mockReturnValue(true),
     } as unknown as jest.Mocked<EventEmitter2>;
 
+    // D1: DriversService.transitionVerification is the canonical
+    // entry point. The mock mutates the driver profile in-place so
+    // existing assertions (savedProfile.isOnline === false, etc.)
+    // continue to observe the post-transition state.
+    driversService = {
+      transitionVerification: jest
+        .fn()
+        .mockImplementation(
+          (driverId: string, dto: { status: DriverVerificationStatus }) => {
+            // The cron resolves the profile by userId first, then
+            // hands the driverId. We don't need driverId here — the
+            // test pre-loads driverProfileRepo.findOne to return a
+            // mutable profile object; mutate that.
+            const profile = (driverProfileRepo.findOne.mock.results[0]
+              ?.value as Promise<DriverProfile | null> | null)
+              ? // resolved value cached
+                undefined
+              : undefined;
+            void profile;
+            // Drive the save spy so existing assertions on
+            // driverProfileRepo.save still observe the call.
+            return (async () => {
+              const resolved = (await driverProfileRepo.findOne.mock.results[0]
+                ?.value) as DriverProfile | null;
+              if (!resolved) return null;
+              resolved.verificationStatus = dto.status;
+              if (
+                dto.status === DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED
+              ) {
+                resolved.isOnline = false;
+              }
+              await driverProfileRepo.save(resolved);
+              return resolved;
+            })();
+          },
+        ),
+    };
+
     cron = new DocumentExpiryCron(
       documentRepo,
       driverProfileRepo,
       vehicleRepo,
       companyRepo,
       events,
+      driversService as unknown as DriversService,
     );
   });
 

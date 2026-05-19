@@ -428,10 +428,14 @@ describe('DriversService', () => {
         ADMIN,
       );
 
+      // D1 chained transition: pending_approval → approved auto-
+      // promotes to active in the same transaction. The audit ledger
+      // still records ONE row (action=APPROVE) per arch §1.2.
       expect(
         (result as { verificationStatus: DriverVerificationStatus })
           .verificationStatus,
-      ).toBe(DriverVerificationStatus.APPROVED);
+      ).toBe(DriverVerificationStatus.ACTIVE);
+      expect(manager.insert).toHaveBeenCalledTimes(1);
       expect(manager.insert).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
@@ -512,6 +516,142 @@ describe('DriversService', () => {
           ADMIN,
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('transitionVerification (D1 — chain + system path)', () => {
+    interface TxManager {
+      findOne: jest.Mock;
+      save: jest.Mock;
+      insert: jest.Mock;
+    }
+    let manager: TxManager;
+    let dataSource: { transaction: jest.Mock };
+
+    beforeEach(() => {
+      manager = {
+        findOne: jest.fn(),
+        save: jest.fn((entity: unknown) => Promise.resolve(entity)),
+        insert: jest.fn().mockResolvedValue({ identifiers: [{ id: 'ap-1' }] }),
+      };
+      dataSource = {
+        transaction: jest.fn((cb: (m: TxManager) => unknown) =>
+          Promise.resolve(cb(manager)),
+        ),
+      };
+
+      (service as any).dataSource = dataSource;
+    });
+
+    it('pending_approval → approved chains to active (1 audit row, action=approve)', async () => {
+      manager.findOne.mockResolvedValue({
+        id: 'd-1',
+        userId: 'u-1',
+        verificationStatus: DriverVerificationStatus.PENDING_APPROVAL,
+        isOnline: false,
+      });
+
+      const result = await service.transitionVerification(
+        'd-1',
+        { status: DriverVerificationStatus.APPROVED },
+        { id: 'admin-1', role: UserRole.ADMIN } as never,
+      );
+
+      expect(
+        (result as { verificationStatus: DriverVerificationStatus })
+          .verificationStatus,
+      ).toBe(DriverVerificationStatus.ACTIVE);
+      // Exactly one audit row — the chained edge is operational state.
+      expect(manager.insert).toHaveBeenCalledTimes(1);
+      expect(manager.insert).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: 'approve' }),
+      );
+      // Two saves: the approved write + the active chain write.
+      expect(manager.save).toHaveBeenCalledTimes(2);
+    });
+
+    it('system path: caller=null records reviewerId=NULL in the audit row', async () => {
+      manager.findOne.mockResolvedValue({
+        id: 'd-1',
+        userId: 'u-1',
+        verificationStatus: DriverVerificationStatus.ACTIVE,
+        isOnline: true,
+      });
+
+      await service.transitionVerification(
+        'd-1',
+        { status: DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED },
+        null,
+      );
+
+      expect(manager.insert).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          targetType: 'driver',
+          action: 'suspend',
+          reviewerId: null,
+        }),
+      );
+    });
+  });
+
+  describe('submitForApproval (D1)', () => {
+    interface TxManager {
+      findOne: jest.Mock;
+      save: jest.Mock;
+      insert: jest.Mock;
+    }
+    let manager: TxManager;
+
+    beforeEach(() => {
+      manager = {
+        findOne: jest.fn(),
+        save: jest.fn((entity: unknown) => Promise.resolve(entity)),
+        insert: jest.fn().mockResolvedValue({ identifiers: [{ id: 'ap-1' }] }),
+      };
+
+      (service as any).dataSource = {
+        transaction: jest.fn((cb: (m: TxManager) => unknown) =>
+          Promise.resolve(cb(manager)),
+        ),
+      };
+    });
+
+    it('flips setup_required → pending_approval with reviewerId=NULL', async () => {
+      manager.findOne.mockResolvedValue({
+        id: 'd-1',
+        userId: 'u-1',
+        verificationStatus: DriverVerificationStatus.SETUP_REQUIRED,
+        isOnline: false,
+      });
+
+      const result = await service.submitForApproval('d-1');
+
+      expect(
+        (result as { verificationStatus: DriverVerificationStatus })
+          .verificationStatus,
+      ).toBe(DriverVerificationStatus.PENDING_APPROVAL);
+      expect(manager.insert).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: 'approve',
+          reviewerId: null,
+        }),
+      );
+    });
+
+    it('refuses to re-submit from active (DRIVER_002)', async () => {
+      manager.findOne.mockResolvedValue({
+        id: 'd-1',
+        userId: 'u-1',
+        verificationStatus: DriverVerificationStatus.ACTIVE,
+        isOnline: true,
+      });
+
+      await expect(service.submitForApproval('d-1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 

@@ -55,12 +55,16 @@ export class ApprovalDecision {
   })
   action: ApprovalAction;
 
-  @Column({ type: 'uuid' })
-  reviewerId: string;
+  // D1 — nullable so system-driven transitions (cron-flipped
+  // suspensions, auto-pending on setup completion) can record a
+  // decision row without a real reviewer. NULL is the documented
+  // "system" sentinel.
+  @Column({ type: 'uuid', nullable: true })
+  reviewerId: string | null;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'reviewerId' })
-  reviewer: User;
+  reviewer: User | null;
 
   @Column({ type: 'text', nullable: true })
   reason: string | null;

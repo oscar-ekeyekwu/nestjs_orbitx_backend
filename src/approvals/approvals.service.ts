@@ -13,7 +13,10 @@ export interface RecordDecisionInput {
   targetType: ApprovalTargetType;
   targetId: string;
   action: ApprovalAction;
-  reviewerId: string;
+  // D1: nullable for system-driven transitions (cron suspend, auto
+  // setup_required → pending_approval). Admin paths still pass a
+  // real user id.
+  reviewerId: string | null;
   reason?: string | null;
 }
 
@@ -51,7 +54,7 @@ export class ApprovalsService {
       targetType: input.targetType,
       targetId: input.targetId,
       action: input.action,
-      reviewerId: input.reviewerId,
+      reviewerId: input.reviewerId ?? null,
       reason: input.reason ?? null,
     });
   }

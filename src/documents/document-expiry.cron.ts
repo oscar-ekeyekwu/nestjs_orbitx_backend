@@ -14,6 +14,8 @@ import {
   DriverVerificationStatus,
 } from '../drivers/entities/driver-profile.entity';
 import { driverStateMachine } from '../drivers/driver-state-machine';
+import { DriversService } from '../drivers/drivers.service';
+import { BadRequestException } from '@nestjs/common';
 import { Vehicle, VehicleStatus } from '../vehicles/entities/vehicle.entity';
 import { vehicleStateMachine } from '../vehicles/vehicle-state-machine';
 import { Company, CompanyStatus } from '../companies/entities/company.entity';
@@ -88,6 +90,7 @@ export class DocumentExpiryCron {
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
     private readonly events: EventEmitter2,
+    private readonly driversService: DriversService,
   ) {}
 
   @Cron('0 2 * * *', {
@@ -249,11 +252,22 @@ export class DocumentExpiryCron {
     ) {
       return false;
     }
-    profile.verificationStatus =
-      DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED;
-    profile.isOnline = false;
-    await this.driverProfileRepo.save(profile);
-    return true;
+    // D1 — route through transitionVerification so the audit ledger
+    // records a row (reviewerId=NULL = system). isOnline=false is
+    // set inside the canonical transition path.
+    try {
+      await this.driversService.transitionVerification(
+        profile.id,
+        { status: DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED },
+        null,
+      );
+      return true;
+    } catch (err) {
+      // canTransition gated above, so the only realistic failures
+      // are concurrent state flips. Log + skip.
+      if (err instanceof BadRequestException) return false;
+      throw err;
+    }
   }
 
   private async suspendVehicle(vehicleId: string): Promise<boolean> {
@@ -303,9 +317,19 @@ export class DocumentExpiryCron {
     ) {
       return false;
     }
-    profile.verificationStatus = DriverVerificationStatus.ACTIVE;
-    await this.driverProfileRepo.save(profile);
-    return true;
+    // D1 — system-driven reactivation via the canonical entry point.
+    // approval_decisions row records RESUME with reviewerId=NULL.
+    try {
+      await this.driversService.transitionVerification(
+        profile.id,
+        { status: DriverVerificationStatus.ACTIVE },
+        null,
+      );
+      return true;
+    } catch (err) {
+      if (err instanceof BadRequestException) return false;
+      throw err;
+    }
   }
 
   private async reactivateVehicle(vehicleId: string): Promise<boolean> {
