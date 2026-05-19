@@ -18,7 +18,10 @@ import { NotificationsModule } from '../notifications/notification.module';
     // forwardRef because RealtimeModule also imports OrdersModule
     // (gateway calls back into ordersService for driver-location persistence).
     forwardRef(() => RealtimeModule),
-    NotificationsModule,
+    // forwardRef because NotificationsModule imports RealtimeModule, which
+    // imports OrdersModule — without this, NotificationsModule resolves to
+    // `undefined` here while it is still initializing further up the chain.
+    forwardRef(() => NotificationsModule),
   ],
   controllers: [OrdersController],
   providers: [OrdersService],
