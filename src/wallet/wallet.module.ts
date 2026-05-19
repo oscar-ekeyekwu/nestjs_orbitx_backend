@@ -1,6 +1,8 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WalletService } from './wallet.service';
+import { WalletReconcileService } from './wallet-reconcile.service';
+import { WalletReconcileCron } from './wallet-reconcile.cron';
 import { WalletController } from './wallet.controller';
 import { Wallet } from './entities/wallet.entity';
 import { Transaction } from './entities/transaction.entity';
@@ -14,8 +16,8 @@ import { PaymentModule } from '../payment/payment.module';
     SystemConfigModule,
     forwardRef(() => PaymentModule),
   ],
-  providers: [WalletService],
+  providers: [WalletService, WalletReconcileService, WalletReconcileCron],
   controllers: [WalletController],
-  exports: [WalletService],
+  exports: [WalletService, WalletReconcileService],
 })
 export class WalletModule {}

@@ -11,7 +11,6 @@ import {
   PaymentMethod,
   Transaction,
 } from '../wallet/entities/transaction.entity';
-import { Wallet } from '../wallet/entities/wallet.entity';
 import {
   ApprovalAction,
   ApprovalDecision,
@@ -36,14 +35,6 @@ function buildOrder(overrides: Partial<Order> = {}): Order {
     packageSize: PackageSize.SMALL,
     ...overrides,
   } as Order;
-}
-
-function buildWallet(): Wallet {
-  return {
-    id: 'wallet-customer',
-    userId: 'customer-1',
-    balance: naira('0'),
-  } as Wallet;
 }
 
 describe('OrdersService.reconcileBankTransfer (G3)', () => {
@@ -81,11 +72,9 @@ describe('OrdersService.reconcileBankTransfer (G3)', () => {
     );
   });
 
-  it('inserts a Transaction + ApprovalDecision + flips paymentStatus to COMPLETED', async () => {
+  it('inserts an ApprovalDecision + flips paymentStatus to COMPLETED (G3 + G6)', async () => {
     const order = buildOrder();
-    manager.findOne
-      .mockResolvedValueOnce(order)
-      .mockResolvedValueOnce(buildWallet());
+    manager.findOne.mockResolvedValueOnce(order);
 
     const result = await service.reconcileBankTransfer(
       'order-ref-1',
@@ -96,14 +85,6 @@ describe('OrdersService.reconcileBankTransfer (G3)', () => {
     expect(result.finalPrice?.toString()).toBe('2500');
 
     expect(manager.insert).toHaveBeenCalledWith(
-      Transaction,
-      expect.objectContaining({
-        paymentMethod: PaymentMethod.BANK_TRANSFER,
-        reference: 'order-ref-1',
-        orderId: 'order-ref-1',
-      }),
-    );
-    expect(manager.insert).toHaveBeenCalledWith(
       ApprovalDecision,
       expect.objectContaining({
         targetType: ApprovalTargetType.ORDER,
@@ -111,6 +92,13 @@ describe('OrdersService.reconcileBankTransfer (G3)', () => {
         action: ApprovalAction.APPROVE,
         reviewerId: 'admin-1',
       }),
+    );
+    // G6 — bank transfer reconcile must NOT insert a customer-wallet
+    // Transaction row, since the funds belong to the platform; doing
+    // so would drift wallet.balance from sum(credits) - sum(debits).
+    expect(manager.insert).not.toHaveBeenCalledWith(
+      Transaction,
+      expect.anything(),
     );
   });
 
@@ -157,16 +145,6 @@ describe('OrdersService.reconcileBankTransfer (G3)', () => {
     await expect(
       service.reconcileBankTransfer('order-ref-1', buildAdmin()),
     ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('404s when the customer wallet is missing', async () => {
-    manager.findOne
-      .mockResolvedValueOnce(buildOrder())
-      .mockResolvedValueOnce(null);
-
-    await expect(
-      service.reconcileBankTransfer('order-ref-1', buildAdmin()),
-    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 

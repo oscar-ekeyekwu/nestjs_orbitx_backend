@@ -45,7 +45,7 @@ import { NotificationsService } from '../notifications/notification.service';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { User } from '../users/entities/user.entity';
 import Decimal from 'decimal.js';
-import { Naira, NAIRA_ZERO, naira } from '../common/money';
+import { Naira, naira } from '../common/money';
 import { haversineKm } from '../common/geo';
 
 @Injectable()
@@ -693,28 +693,15 @@ export class OrdersService {
         );
       }
 
-      const customerWallet = await manager.findOne(Wallet, {
-        where: { userId: order.customerId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!customerWallet) {
-        throw new NotFoundException('Customer wallet not provisioned.');
-      }
-
+      // G3 reconcile records the order-level audit in approval_decisions
+      // and flips order.paymentStatus to COMPLETED. We intentionally do
+      // NOT insert a customer-wallet Transaction row here: bank transfer
+      // funds belong to the platform, not the customer's wallet. The
+      // G6 ledger invariant (sum(credits) - sum(debits) = wallet.balance)
+      // depends on every Transaction row being a real wallet movement;
+      // an audit-only row with balanceAfter=unchanged would silently
+      // drift the invariant by `amount` on every reconcile.
       const amount = order.finalPrice ?? order.estimatedPrice;
-
-      await manager.insert(Transaction, {
-        walletId: customerWallet.id,
-        orderId: order.id,
-        type: TransactionType.CREDIT,
-        amount,
-        commission: NAIRA_ZERO,
-        balanceAfter: customerWallet.balance,
-        status: TransactionStatus.COMPLETED,
-        paymentMethod: PaymentMethod.BANK_TRANSFER,
-        reference,
-        description: `Bank transfer reconciled by admin ${admin.id}`,
-      });
 
       await manager.insert(ApprovalDecision, {
         targetType: ApprovalTargetType.ORDER,
