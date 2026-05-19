@@ -4,11 +4,18 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
-import { Order, OrderStatus, PackageSize } from './entities/order.entity';
+import { DataSource, IsNull, Repository } from 'typeorm';
+import {
+  Order,
+  OrderPaymentStatus,
+  OrderStatus,
+  PackageSize,
+} from './entities/order.entity';
 import { ErrorCodes } from '../common/constants/error-codes';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -16,7 +23,18 @@ import { UserRole } from '../common/enums/user-role.enum';
 import { WalletService } from '../wallet/wallet.service';
 import { SystemConfigService } from '../config/config.service';
 import { ConfigKey } from '../config/enums/config-keys.enum';
-import { PaymentMethod } from '../wallet/entities/transaction.entity';
+import {
+  PaymentMethod,
+  Transaction,
+  TransactionStatus,
+  TransactionType,
+} from '../wallet/entities/transaction.entity';
+import { Wallet } from '../wallet/entities/wallet.entity';
+import {
+  ApprovalAction,
+  ApprovalDecision,
+  ApprovalTargetType,
+} from '../approvals/entities/approval-decision.entity';
 import {
   PaginatedResult,
   createPaginatedResponse,
@@ -24,6 +42,7 @@ import {
 import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { NotificationsService } from '../notifications/notification.service';
+import { ReceiptsService } from '../receipts/receipts.service';
 import { User } from '../users/entities/user.entity';
 import Decimal from 'decimal.js';
 import { Naira, naira } from '../common/money';
@@ -43,7 +62,17 @@ export class OrdersService {
     // forms a cycle; the module import is also forwardRef'd in orders.module.ts.
     @Inject(forwardRef(() => NotificationsService))
     private notifications: NotificationsService,
+    // E4 — receipts pipeline. Best-effort fire on DELIVERED; failures
+    // are logged but never roll back the status transition.
+    private readonly receipts: ReceiptsService,
     private readonly dataSource: DataSource,
+    // F2 — lazy-resolved so legacy specs that construct OrdersService
+    // directly (without the vehicles module wired up) still run. When
+    // ModuleRef is undefined the lock-mode gate is a no-op, which is
+    // also the correct production behaviour when VEHICLE_EDIT_GRACE_MODE
+    // is `continue` (the default).
+    @Optional()
+    private readonly moduleRef?: ModuleRef,
   ) {}
 
   /**
@@ -99,11 +128,26 @@ export class OrdersService {
       createOrderDto.packageSize,
     );
 
+    // G2 / G3 — payment method ships as part of the create DTO; default
+    // to CASH so v0 clients (which don't send the field) keep working.
+    //   cash          → pending_cash     (driver collects)
+    //   bank_transfer → pending_transfer (admin reconciles)
+    //   anything else → pending          (Paystack webhook closes it)
+    const paymentMethod = createOrderDto.paymentMethod ?? PaymentMethod.CASH;
+    const paymentStatus =
+      paymentMethod === PaymentMethod.CASH
+        ? OrderPaymentStatus.PENDING_CASH
+        : paymentMethod === PaymentMethod.BANK_TRANSFER
+          ? OrderPaymentStatus.PENDING_TRANSFER
+          : OrderPaymentStatus.PENDING;
+
     const order = this.ordersRepository.create({
       ...createOrderDto,
       customerId,
       estimatedPrice,
       status: OrderStatus.PENDING,
+      paymentMethod,
+      paymentStatus,
     });
 
     const savedOrder = await this.ordersRepository.save(order);
@@ -189,11 +233,21 @@ export class OrdersService {
       50,
     );
 
-    // Find pending orders
+    // G3 — exclude orders whose payment is still being arranged
+    // off-platform (pending_transfer for manual bank transfer, plain
+    // pending for Paystack pre-webhook). Cash orders pass through —
+    // the driver collects in person. Reconciled orders (paymentStatus
+    // = pending_cash | completed) become broadcast-eligible.
     const orders = await this.ordersRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.customer', 'customer')
       .where('order.status = :status', { status: OrderStatus.PENDING })
+      .andWhere('order.paymentStatus NOT IN (:...blocked)', {
+        blocked: [
+          OrderPaymentStatus.PENDING,
+          OrderPaymentStatus.PENDING_TRANSFER,
+        ],
+      })
       .orderBy('order.createdAt', 'ASC')
       .getMany();
 
@@ -225,6 +279,37 @@ export class OrdersService {
     return order;
   }
 
+  /**
+   * Caller-scoped variant of `findOne`. Customers can only fetch orders
+   * they placed; drivers can only fetch orders they were assigned to;
+   * admins always pass. Throws ForbiddenException with no distinguishing
+   * message between "not found" and "not yours" so the endpoint can't
+   * be used to probe for valid order ids belonging to someone else.
+   *
+   * E2 — gates exposure of `driver.phone` to a customer who is not the
+   * order owner (the relation loads driver info that the controller
+   * serializes to the caller).
+   */
+  async findOneScoped(
+    id: string,
+    callerUserId: string,
+    callerRole: UserRole,
+  ): Promise<Order> {
+    const order = await this.findOne(id);
+
+    if (callerRole === UserRole.ADMIN) {
+      return order;
+    }
+    if (callerRole === UserRole.CUSTOMER && order.customerId === callerUserId) {
+      return order;
+    }
+    if (callerRole === UserRole.DRIVER && order.driverId === callerUserId) {
+      return order;
+    }
+
+    throw new ForbiddenException('Not authorized to view this order');
+  }
+
   async acceptOrder(orderId: string, driverId: string): Promise<Order> {
     // Balance gate runs BEFORE the lock so a broke driver doesn't hold
     // the row open while the wallet check runs.
@@ -238,6 +323,12 @@ export class OrdersService {
         `Insufficient balance. Minimum balance of ₦${minBalance} required to accept orders`,
       );
     }
+
+    // F2 — lock-mode gate. If VEHICLE_EDIT_GRACE_MODE=lock and the
+    // driver's active vehicle has a pending regulatory edit awaiting
+    // admin review, refuse acceptance with VEHICLE_002. continue mode
+    // (the default) skips this entirely.
+    await this.assertNoVehicleEditLock(driverId);
 
     // ARCH-12 — first-accept-wins via pessimistic_write on the order
     // row. Two concurrent acceptOrder calls serialize at the DB; the
@@ -408,6 +499,12 @@ export class OrdersService {
           await this.safeNotify('order_delivered', () =>
             this.notifications.notifyOrderDelivered(savedOrder, recipient),
           );
+          // E4 — receipt is best-effort; if S3 / SMS / SMTP are down,
+          // the customer still gets the existing in-app delivery
+          // notification and an oncall reviewer can replay later.
+          await this.safeNotify('order_receipt', () =>
+            this.receipts.generateForOrder(savedOrder.id).then(() => undefined),
+          );
           break;
         default:
           break;
@@ -415,6 +512,209 @@ export class OrdersService {
     }
 
     return savedOrder;
+  }
+
+  /**
+   * G2 — driver confirms cash payment received on a delivered order.
+   *
+   *  - Validates the order belongs to this driver + the channel is
+   *    cash + the order is delivered + payment is still pending.
+   *  - Settles in one transaction: inserts a Transaction row (method
+   *    cash) for the gross fee, credits the driver's wallet net of
+   *    commission, leaves the commission as the platform's share.
+   *  - Idempotent: a second call after settlement returns the order
+   *    unchanged with paymentStatus already COMPLETED.
+   */
+  async markCashCollected(orderId: string, driverId: string): Promise<Order> {
+    return this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id: orderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) {
+        throw new NotFoundException('Order not found');
+      }
+      if (order.driverId !== driverId) {
+        throw new ForbiddenException(
+          'Only the assigned driver can mark cash collected.',
+        );
+      }
+      if (order.paymentMethod !== PaymentMethod.CASH) {
+        throw new BadRequestException(
+          'Cash collection only applies to cash-on-delivery orders.',
+        );
+      }
+      if (order.status !== OrderStatus.DELIVERED) {
+        throw new BadRequestException(
+          'Mark the order as delivered before settling cash.',
+        );
+      }
+      if (order.paymentStatus === OrderPaymentStatus.COMPLETED) {
+        // Idempotent: replay returns the existing settled state.
+        return order;
+      }
+      if (order.paymentStatus !== OrderPaymentStatus.PENDING_CASH) {
+        throw new BadRequestException(
+          `Cannot collect cash on a ${order.paymentStatus} order.`,
+        );
+      }
+
+      const fee = order.finalPrice ?? order.estimatedPrice;
+      // G5 — split via the centralized helper. The rate is captured on
+      // the split result so we can lock it onto the transaction row.
+      const split = await this.walletService.applyCommission(fee);
+
+      const driverWallet = await manager.findOne(Wallet, {
+        where: { userId: driverId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!driverWallet) {
+        throw new NotFoundException('Driver wallet not provisioned.');
+      }
+      driverWallet.balance = driverWallet.balance.plus(
+        split.driverShare,
+      ) as Naira;
+      driverWallet.totalEarnings = driverWallet.totalEarnings.plus(
+        split.driverShare,
+      ) as Naira;
+      await manager.save(driverWallet);
+
+      await manager.insert(Transaction, {
+        walletId: driverWallet.id,
+        orderId: order.id,
+        type: TransactionType.CREDIT,
+        amount: split.driverShare,
+        commission: split.commission,
+        commissionPct: String(split.commissionPct),
+        balanceAfter: driverWallet.balance,
+        status: TransactionStatus.COMPLETED,
+        paymentMethod: PaymentMethod.CASH,
+        description: `Cash collection for order ${order.id}`,
+      });
+
+      order.paymentStatus = OrderPaymentStatus.COMPLETED;
+      order.finalPrice = fee;
+      return manager.save(order);
+    });
+  }
+
+  /**
+   * G3 — static platform bank account read from system_config so admins
+   * can update without a deploy. Returns the default placeholder when
+   * the JSON is unset / unparseable.
+   */
+  async getPlatformBankAccount(): Promise<{
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+  }> {
+    const raw = await this.configService.getString(
+      ConfigKey.PLATFORM_BANK_ACCOUNT,
+      '',
+    );
+    const fallback = {
+      bankName: 'Pending — set in admin console',
+      accountName: 'Orbit Technologies Ltd',
+      accountNumber: '0000000000',
+    };
+    if (!raw) return fallback;
+    try {
+      const parsed = JSON.parse(raw) as Partial<typeof fallback>;
+      return {
+        bankName: parsed.bankName ?? fallback.bankName,
+        accountName: parsed.accountName ?? fallback.accountName,
+        accountNumber: parsed.accountNumber ?? fallback.accountNumber,
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
+   * G3 — list pending-transfer orders for the admin reconcile queue.
+   * Oldest-first so reviewers FIFO through deposits matching what
+   * shows up in the bank statement.
+   */
+  async listPendingTransfers(opts: {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Order[]; total: number }> {
+    const limit = opts.limit ?? 50;
+    const offset = opts.offset ?? 0;
+    const [items, total] = await this.ordersRepository.findAndCount({
+      where: { paymentStatus: OrderPaymentStatus.PENDING_TRANSFER },
+      relations: ['customer'],
+      order: { createdAt: 'ASC' },
+      take: limit,
+      skip: offset,
+    });
+    return { items, total };
+  }
+
+  /**
+   * G3 — admin matches a bank deposit to an order reference and
+   * reconciles it. Reference is the order id (also exposed to the
+   * customer as the per-order transfer reference at checkout).
+   *
+   * Settlement runs in one transaction:
+   *   - Pessimistic_write lock on the order row.
+   *   - Inserts a Transaction row tagged method=bank_transfer with
+   *     reference + reviewer.
+   *   - Writes an approval_decisions audit row (DR-B4).
+   *   - Flips paymentStatus → COMPLETED so the order becomes
+   *     broadcast-eligible in findAvailableOrders.
+   *
+   * Idempotent — a duplicate reconcile on a COMPLETED row returns the
+   * order untouched. Throws NotFoundException for unknown references
+   * and BadRequestException for non-transfer / wrong-status orders.
+   */
+  async reconcileBankTransfer(reference: string, admin: User): Promise<Order> {
+    return this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id: reference },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) {
+        throw new NotFoundException(
+          'No order found for that reference. Double-check the reference printed on the deposit.',
+        );
+      }
+      if (order.paymentMethod !== PaymentMethod.BANK_TRANSFER) {
+        throw new BadRequestException(
+          'Reconcile only applies to bank-transfer orders.',
+        );
+      }
+      if (order.paymentStatus === OrderPaymentStatus.COMPLETED) {
+        return order;
+      }
+      if (order.paymentStatus !== OrderPaymentStatus.PENDING_TRANSFER) {
+        throw new BadRequestException(
+          `Cannot reconcile a ${order.paymentStatus} order.`,
+        );
+      }
+
+      // G3 reconcile records the order-level audit in approval_decisions
+      // and flips order.paymentStatus to COMPLETED. We intentionally do
+      // NOT insert a customer-wallet Transaction row here: bank transfer
+      // funds belong to the platform, not the customer's wallet. The
+      // G6 ledger invariant (sum(credits) - sum(debits) = wallet.balance)
+      // depends on every Transaction row being a real wallet movement;
+      // an audit-only row with balanceAfter=unchanged would silently
+      // drift the invariant by `amount` on every reconcile.
+      const amount = order.finalPrice ?? order.estimatedPrice;
+
+      await manager.insert(ApprovalDecision, {
+        targetType: ApprovalTargetType.ORDER,
+        targetId: order.id,
+        action: ApprovalAction.APPROVE,
+        reviewerId: admin.id,
+        reason: null,
+      });
+
+      order.paymentStatus = OrderPaymentStatus.COMPLETED;
+      order.finalPrice = amount;
+      return manager.save(order);
+    });
   }
 
   async updateDriverLocation(
@@ -556,5 +856,60 @@ export class OrdersService {
     lon2: number,
   ): number {
     return haversineKm(lat1, lon1, lat2, lon2);
+  }
+
+  /**
+   * F2 lock-mode gate — refuses acceptance when the driver's active
+   * vehicle has a pending regulatory edit and
+   * VEHICLE_EDIT_GRACE_MODE=lock. No-op when the moduleRef isn't
+   * wired (legacy specs) or no active assignment exists.
+   *
+   * Resolution is lazy on purpose: VehicleAssignment + the pending
+   * updates service live in VehiclesModule, which OrdersModule does
+   * not statically import (avoiding another cycle). Using ModuleRef
+   * keeps the wiring contained to this single helper.
+   */
+  private async assertNoVehicleEditLock(driverId: string): Promise<void> {
+    if (!this.moduleRef) return;
+
+    type AssignmentRepo = {
+      findOne: (opts: unknown) => Promise<{ vehicleId: string } | null>;
+    };
+    type PendingService = {
+      checkAcceptanceBlock: (vehicleId: string) => Promise<string | null>;
+    };
+
+    let assignmentRepo: AssignmentRepo | null = null;
+    let pendingService: PendingService | null = null;
+    try {
+      assignmentRepo = this.moduleRef.get<AssignmentRepo>(
+        'VehicleAssignmentRepository' as never,
+        { strict: false },
+      );
+      pendingService = this.moduleRef.get<PendingService>(
+        'VehiclePendingUpdatesService' as never,
+        { strict: false },
+      );
+    } catch {
+      return;
+    }
+    if (!assignmentRepo || !pendingService) return;
+
+    const assignment = await assignmentRepo.findOne({
+      where: { driverId, unassignedAt: IsNull() },
+      order: { assignedAt: 'DESC' },
+    });
+    if (!assignment) return;
+
+    const block = await pendingService.checkAcceptanceBlock(
+      assignment.vehicleId,
+    );
+    if (block) {
+      throw new BadRequestException({
+        errorCode: block,
+        message:
+          'Vehicle change under review — you cannot accept orders until approved.',
+      });
+    }
   }
 }

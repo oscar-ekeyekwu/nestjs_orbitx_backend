@@ -11,6 +11,7 @@ import {
 import { Transform } from 'class-transformer';
 import type { TransformFnParams } from 'class-transformer';
 import { PackageSize } from '../entities/order.entity';
+import { PaymentMethod } from '../../wallet/entities/transaction.entity';
 import { normalizeNigerianPhone } from '../../common/utils/phone';
 
 const normalizePhone = ({ value }: TransformFnParams): unknown => {
@@ -75,4 +76,11 @@ export class CreateOrderDto {
   @IsOptional()
   @IsString()
   deliveryNotes?: string;
+
+  // G2 — customer picks a payment channel at checkout. Defaults to
+  // cash for back-compat with v0 clients that don't ship this field;
+  // ARCH-13 + G1 / G3 set 'card' / 'bank_transfer' as needed.
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }

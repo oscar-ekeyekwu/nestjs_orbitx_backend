@@ -4,19 +4,24 @@ import { VehiclesController } from './vehicles.controller';
 import { VehiclesService } from './vehicles.service';
 import { VehicleAssignmentsController } from './vehicle-assignments.controller';
 import { VehicleAssignmentsService } from './vehicle-assignments.service';
+import { VehiclePendingUpdatesController } from './vehicle-pending-updates.controller';
+import { VehiclePendingUpdatesService } from './vehicle-pending-updates.service';
 import { Vehicle } from './entities/vehicle.entity';
 import { VehicleAssignment } from './entities/vehicle-assignment.entity';
+import { VehiclePendingUpdate } from './entities/vehicle-pending-update.entity';
 import { ApprovalDecision } from '../approvals/entities/approval-decision.entity';
 import { DriverProfile } from '../drivers/entities/driver-profile.entity';
 import { Company } from '../companies/entities/company.entity';
 import { CompaniesModule } from '../companies/companies.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { SystemConfigModule } from '../config/config.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       Vehicle,
       VehicleAssignment,
+      VehiclePendingUpdate,
       ApprovalDecision,
       DriverProfile,
       Company,
@@ -25,9 +30,22 @@ import { ApprovalsModule } from '../approvals/approvals.module';
     // for the "driver must be an approved member" check.
     CompaniesModule,
     ApprovalsModule,
+    SystemConfigModule,
   ],
-  providers: [VehiclesService, VehicleAssignmentsService],
-  controllers: [VehiclesController, VehicleAssignmentsController],
-  exports: [VehiclesService, VehicleAssignmentsService],
+  providers: [
+    VehiclesService,
+    VehicleAssignmentsService,
+    VehiclePendingUpdatesService,
+  ],
+  controllers: [
+    VehiclesController,
+    VehicleAssignmentsController,
+    VehiclePendingUpdatesController,
+  ],
+  exports: [
+    VehiclesService,
+    VehicleAssignmentsService,
+    VehiclePendingUpdatesService,
+  ],
 })
 export class VehiclesModule {}

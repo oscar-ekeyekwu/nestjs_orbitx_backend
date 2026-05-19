@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Put,
@@ -27,6 +28,15 @@ class UpdateDriverSettingsDto {
   @IsOptional()
   @IsNumber()
   orderDeliveryRadiusKm?: number;
+
+  /**
+   * G5 — platform commission percentage. The wallet split helper
+   * additionally guards against out-of-range values at apply time, so
+   * accidental persistence here still surfaces a clear runtime error.
+   */
+  @IsOptional()
+  @IsNumber()
+  driverCommissionPct?: number;
 }
 
 class UpdatePricingSettingsDto {
@@ -68,11 +78,16 @@ export class ConfigController {
   @Get('driver-settings')
   @ApiOperation({ summary: 'Get driver and order settings' })
   async getDriverSettings() {
-    const [driverMinBalance, orderDeliveryRadiusKm] = await Promise.all([
-      this.configService.getNumber(ConfigKey.DRIVER_MIN_BALANCE, 5000),
-      this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
-    ]);
-    return { driverMinBalance, orderDeliveryRadiusKm };
+    const [driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct] =
+      await Promise.all([
+        this.configService.getNumber(ConfigKey.DRIVER_MIN_BALANCE, 5000),
+        this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
+        this.configService.getNumber(
+          ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
+          15,
+        ),
+      ]);
+    return { driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct };
   }
 
   @Get('pricing-settings')
@@ -157,14 +172,34 @@ export class ConfigController {
       );
     }
 
+    if (dto.driverCommissionPct !== undefined) {
+      if (dto.driverCommissionPct < 0 || dto.driverCommissionPct > 100) {
+        throw new BadRequestException(
+          'driverCommissionPct must be between 0 and 100.',
+        );
+      }
+      updates.push(
+        this.configService.update(ConfigKey.DRIVER_COMMISSION_PERCENTAGE, {
+          key: ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
+          value: String(dto.driverCommissionPct),
+          dataType: 'number',
+        }),
+      );
+    }
+
     await Promise.all(updates);
 
-    const [driverMinBalance, orderDeliveryRadiusKm] = await Promise.all([
-      this.configService.getNumber(ConfigKey.DRIVER_MIN_BALANCE, 5000),
-      this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
-    ]);
+    const [driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct] =
+      await Promise.all([
+        this.configService.getNumber(ConfigKey.DRIVER_MIN_BALANCE, 5000),
+        this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
+        this.configService.getNumber(
+          ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
+          15,
+        ),
+      ]);
 
-    return { driverMinBalance, orderDeliveryRadiusKm };
+    return { driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct };
   }
 
   @Get(':key')

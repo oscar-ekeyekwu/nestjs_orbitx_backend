@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
+import { OrderShareService } from './order-share.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -25,7 +26,10 @@ import { GetOrdersQueryDto } from './dto/get-orders-query.dto';
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly orderShareService: OrderShareService,
+  ) {}
 
   @Post()
   @Roles(UserRole.CUSTOMER)
@@ -38,6 +42,14 @@ export class OrdersController {
   @ApiOperation({ summary: 'Get user orders' })
   findAll(@CurrentUser() user: User, @Query() query: GetOrdersQueryDto) {
     return this.ordersService.findAll(user.id, user.role, query);
+  }
+
+  // G3 — static platform bank account for the mobile checkout. Placed
+  // BEFORE @Get(':id') so the static `payment/bank-account` segment
+  // takes precedence over the :id parameterized route.
+  @Get('payment/bank-account')
+  bankAccount() {
+    return this.ordersService.getPlatformBankAccount();
   }
 
   @Get('available')
@@ -53,8 +65,11 @@ export class OrdersController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.ordersService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: User) {
+    // E2 — scoped lookup so a customer cannot enumerate other customers'
+    // orders and read the assigned driver's phone number. Drivers are
+    // similarly limited to their own orders; admins pass.
+    return this.ordersService.findOneScoped(id, user.id, user.role);
   }
 
   @Post(':id/accept')
@@ -90,5 +105,28 @@ export class OrdersController {
   @Post(':id/cancel')
   cancelOrder(@Param('id') id: string, @CurrentUser() user: User) {
     return this.ordersService.cancelOrder(id, user.id, user.role);
+  }
+
+  // G2 — driver confirms they collected cash on a delivered order.
+  // Settles the driver's wallet (fee net of commission), inserts a
+  // Transaction row, flips order.paymentStatus to completed. Idempotent.
+  @Post(':id/mark-paid')
+  @Roles(UserRole.DRIVER)
+  @ApiOperation({
+    summary: 'Mark a delivered cash-on-delivery order as paid (driver only).',
+  })
+  markCashCollected(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.ordersService.markCashCollected(id, user.id);
+  }
+
+  // E3 — customer mints a share token for the recipient. Idempotent;
+  // a second call for the same order returns the same token.
+  @Post(':id/share-token')
+  @Roles(UserRole.CUSTOMER)
+  @ApiOperation({
+    summary: 'Create or reuse a public share token (Customer only)',
+  })
+  createShareToken(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.orderShareService.issueToken(id, user.id);
   }
 }

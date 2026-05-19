@@ -28,6 +28,16 @@ export enum ConfigKey {
   // stay operational while an edit goes through approval; 'pending'
   // pulls it from dispatch until the admin signs off.
   VEHICLE_EDIT_GRACE_MODE = 'VEHICLE_EDIT_GRACE_MODE',
+
+  // G3 — platform bank account customers transfer to when paying by
+  // manual transfer. Stored as JSON `{ bankName, accountName,
+  // accountNumber }` so the admin can update without a deploy.
+  PLATFORM_BANK_ACCOUNT = 'PLATFORM_BANK_ACCOUNT',
+
+  // G4 — minimum wallet balance (in Naira) a recipient must hit to be
+  // included in the weekly payout cron. Below the threshold the row
+  // is skipped — the balance rolls over to the next week.
+  MIN_PAYOUT_THRESHOLD = 'MIN_PAYOUT_THRESHOLD',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -45,8 +55,9 @@ export const DEFAULT_CONFIG_VALUES: Record<
     dataType: 'number',
   },
   [ConfigKey.DRIVER_COMMISSION_PERCENTAGE]: {
-    value: '20',
-    description: 'Platform commission percentage taken from each delivery',
+    value: '15',
+    description:
+      'Platform commission percentage taken from each completed order (G5). Stored on each transactions.commissionPct row at completion time so retroactive rate changes never rewrite historical splits.',
     dataType: 'number',
   },
   [ConfigKey.ORDER_DELIVERY_RADIUS_KM]: {
@@ -110,7 +121,23 @@ export const DEFAULT_CONFIG_VALUES: Record<
   [ConfigKey.VEHICLE_EDIT_GRACE_MODE]: {
     value: 'continue',
     description:
-      'How a vehicle behaves while an edit is awaiting admin review. "continue" = stays operational, "pending" = pulled from dispatch until approved. F3 (Sprint 4) reads this; B7 seeds the default.',
+      'How a vehicle behaves while an edit is awaiting admin review. "continue" = stays operational, "lock" = driver cannot accept orders (VEHICLE_002). Consumed by F2; F3 exposes the toggle in the admin console.',
     dataType: 'string',
+  },
+  [ConfigKey.PLATFORM_BANK_ACCOUNT]: {
+    value: JSON.stringify({
+      bankName: 'Pending — set in admin console',
+      accountName: 'Orbit Technologies Ltd',
+      accountNumber: '0000000000',
+    }),
+    description:
+      'Static bank account customers transfer to when paying by manual bank transfer (G3). JSON shape: { bankName, accountName, accountNumber }. Admins update via the H8 transfers page.',
+    dataType: 'json',
+  },
+  [ConfigKey.MIN_PAYOUT_THRESHOLD]: {
+    value: '1000',
+    description:
+      'Minimum wallet balance (in Naira) a recipient must hit to be included in the weekly payout cron (G4). Balances below the threshold roll over.',
+    dataType: 'number',
   },
 };

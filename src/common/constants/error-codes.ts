@@ -56,6 +56,11 @@ export const ErrorCodes = {
 
   // Vehicle errors (VEHICLE_xxx)
   VEHICLE_001: 'VEHICLE_INVALID_STATUS_TRANSITION',
+  // F2 — driver tried to accept an order while a regulatory edit on
+  // their active vehicle is awaiting admin review and
+  // VEHICLE_EDIT_GRACE_MODE=lock. Surface message: "Vehicle change
+  // under review — you cannot accept orders until approved."
+  VEHICLE_002: 'VEHICLE_EDIT_UNDER_REVIEW',
 
   // Company errors (COMPANY_xxx)
   COMPANY_001: 'COMPANY_INVALID_STATUS_TRANSITION',

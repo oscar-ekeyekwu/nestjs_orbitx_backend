@@ -2,7 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import type {
+  CreateTransferInput,
+  CreateTransferResult,
+  InitializePaymentInput,
+  InitializePaymentResult,
   IPaymentGateway,
+  VerifyPaymentResult,
   VirtualAccountResult,
   WebhookEvent,
   WebhookEventMetadata,
@@ -33,6 +38,26 @@ interface PaystackChargeSuccessPayload {
     reference: string;
     metadata?: WebhookEventMetadata;
   };
+}
+
+interface PaystackInitializeResponse {
+  access_code: string;
+  reference: string;
+  authorization_url: string;
+}
+
+interface PaystackVerifyResponse {
+  reference: string;
+  /** Paystack returns 'success', 'failed', 'abandoned', 'pending', etc. */
+  status: string;
+  amount: number; // kobo
+}
+
+interface PaystackTransferResponse {
+  transfer_code: string;
+  reference: string;
+  /** Paystack returns 'success' | 'pending' | 'failed' | 'reversed'. */
+  status: string;
 }
 
 @Injectable()
@@ -133,6 +158,130 @@ export class PaystackGateway implements IPaymentGateway {
     return data.data.customer_code;
   }
 
+  /**
+   * ARCH-13 — initialize a Paystack transaction for an order. The
+   * caller (PaymentService) has already minted a pending Transaction
+   * row whose id we pass as `reference`; Paystack echoes that
+   * reference back on the webhook so the handler can find the row
+   * without a metadata lookup.
+   *
+   * amount is sent in kobo (Paystack's smallest unit). All money
+   * flowing across the API boundary is integer kobo; never floats.
+   */
+  async initializePayment(
+    input: InitializePaymentInput,
+  ): Promise<InitializePaymentResult> {
+    const amountKobo = Math.round(input.amountNaira * 100);
+    const res = await fetch(`${this.baseUrl}/transaction/initialize`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: amountKobo,
+        email: input.email,
+        reference: input.transactionId,
+        metadata: {
+          orderId: input.orderId,
+          transactionId: input.transactionId,
+        },
+      }),
+    });
+
+    const envelope =
+      (await res.json()) as PaystackEnvelope<PaystackInitializeResponse>;
+    if (!envelope.status || !envelope.data) {
+      throw new Error(
+        `Paystack initialize failed: ${envelope.message ?? 'Unknown error'}`,
+      );
+    }
+    return {
+      accessCode: envelope.data.access_code,
+      reference: envelope.data.reference,
+      authorizationUrl: envelope.data.authorization_url,
+    };
+  }
+
+  /**
+   * G1 — defensive re-check called when the mobile client returns from
+   * the hosted page. Paystack `/transaction/verify/:reference` is
+   * idempotent on their side; we map their string `status` into our
+   * narrow union.
+   */
+  async verifyPayment(reference: string): Promise<VerifyPaymentResult> {
+    const res = await fetch(
+      `${this.baseUrl}/transaction/verify/${encodeURIComponent(reference)}`,
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.secretKey}` },
+      },
+    );
+    const envelope =
+      (await res.json()) as PaystackEnvelope<PaystackVerifyResponse>;
+    if (!envelope.status || !envelope.data) {
+      throw new Error(
+        `Paystack verify failed: ${envelope.message ?? 'Unknown error'}`,
+      );
+    }
+    const raw = envelope.data.status;
+    const status: VerifyPaymentResult['status'] =
+      raw === 'success'
+        ? 'success'
+        : raw === 'failed' || raw === 'abandoned'
+          ? 'failed'
+          : 'pending';
+    return {
+      reference: envelope.data.reference,
+      status,
+      amount: envelope.data.amount / 100,
+    };
+  }
+
+  /**
+   * G4 — outbound transfer to a recipient subaccount. Amount sent in
+   * kobo. `reference` is the payout.id; passing it on every retry
+   * makes Paystack's API idempotent end-to-end.
+   */
+  async createTransfer(
+    input: CreateTransferInput,
+  ): Promise<CreateTransferResult> {
+    const amountKobo = Math.round(input.amountNaira * 100);
+    const res = await fetch(`${this.baseUrl}/transfer`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        source: 'balance',
+        amount: amountKobo,
+        recipient: input.recipientCode,
+        reference: input.reference,
+        reason: input.reason,
+      }),
+    });
+    const envelope =
+      (await res.json()) as PaystackEnvelope<PaystackTransferResponse>;
+    if (!envelope.status || !envelope.data) {
+      throw new Error(
+        `Paystack transfer failed: ${envelope.message ?? 'Unknown error'}`,
+      );
+    }
+    const rawStatus = envelope.data.status;
+    const status: CreateTransferResult['status'] =
+      rawStatus === 'success'
+        ? 'success'
+        : rawStatus === 'pending'
+          ? 'pending'
+          : 'failed';
+    return {
+      transferCode: envelope.data.transfer_code,
+      reference: envelope.data.reference,
+      status,
+    };
+  }
+
   verifyWebhookSignature(payload: Buffer, signature: string): boolean {
     const hash = crypto
       .createHmac('sha512', this.secretKey)
@@ -144,13 +293,28 @@ export class PaystackGateway implements IPaymentGateway {
   parseWebhookEvent(payload: unknown): WebhookEvent | null {
     if (!payload || typeof payload !== 'object') return null;
     const p = payload as PaystackChargeSuccessPayload;
-    if (p.event === 'charge.success' && p.data) {
+    if (!p.data) return null;
+    const base = {
+      amount: p.data.amount / 100, // Paystack amounts are in kobo
+      reference: p.data.reference,
+      metadata: p.data.metadata,
+    };
+    if (p.event === 'charge.success') {
       return {
+        ...base,
         event: 'payment',
-        amount: p.data.amount / 100, // Paystack amounts are in kobo
-        reference: p.data.reference,
-        metadata: p.data.metadata,
+        // ARCH-13 — order-bound charges carry metadata.orderId or
+        // metadata.transactionId. Virtual-account funding events use
+        // metadata.userId, which keeps `kind: 'payment'` so the
+        // existing wallet-topup handler still fires.
+        kind:
+          base.metadata?.orderId || base.metadata?.transactionId
+            ? 'charge_succeeded'
+            : 'payment',
       };
+    }
+    if (p.event === 'charge.failed') {
+      return { ...base, event: 'payment', kind: 'charge_failed' };
     }
     return null;
   }

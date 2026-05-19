@@ -115,6 +115,9 @@ describe('VehiclesService (B3)', () => {
       driverProfileRepo,
       dataSource as unknown as DataSource,
       approvalsService,
+      // F2 — optional. Specific tests below construct their own
+      // service instance with a real pending stub.
+      undefined,
     );
   });
 
@@ -267,6 +270,250 @@ describe('VehiclesService (B3)', () => {
       await expect(
         service.findByIdForUser('missing', buildUser({})),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('updateForUser (F1)', () => {
+    function setupOwned(vehicle: Vehicle) {
+      (vehicleRepo.findOne as jest.Mock).mockResolvedValue(vehicle);
+      (driverProfileRepo.findOne as jest.Mock).mockResolvedValue(
+        buildProfile({ id: 'profile-1' }),
+      );
+      (vehicleRepo.save as jest.Mock).mockImplementation((v: Vehicle) =>
+        Promise.resolve(v),
+      );
+    }
+
+    it('cosmetic edit (color + photoUrl) applies and persists', async () => {
+      const vehicle = buildVehicle({
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: 'profile-1',
+        color: 'Black',
+        photoUrl: null,
+      });
+      setupOwned(vehicle);
+
+      const result = await service.updateForUser(
+        VEHICLE_ID,
+        { color: 'Red', photoUrl: 'https://cdn/x.jpg' },
+        buildUser({}),
+      );
+
+      expect(result.vehicle.color).toBe('Red');
+      expect(result.vehicle.photoUrl).toBe('https://cdn/x.jpg');
+      expect(result.forked).toBe(false);
+      expect(vehicleRepo.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('regulatory edit (plate) on a draft vehicle applies directly + uppercases', async () => {
+      const vehicle = buildVehicle({
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: 'profile-1',
+        plate: 'OLD-111-AB',
+        status: VehicleStatus.DRAFT,
+      });
+      setupOwned(vehicle);
+
+      const result = await service.updateForUser(
+        VEHICLE_ID,
+        { plate: 'new-222-cd' },
+        buildUser({}),
+      );
+
+      expect(result.vehicle.plate).toBe('NEW-222-CD');
+      expect(result.forked).toBe(false);
+    });
+
+    it('partial patch leaves untouched fields alone', async () => {
+      const vehicle = buildVehicle({
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: 'profile-1',
+        color: 'Blue',
+        plate: 'KEEP-777-EF',
+        type: VehicleType.MOTORCYCLE,
+      });
+      setupOwned(vehicle);
+
+      const result = await service.updateForUser(
+        VEHICLE_ID,
+        { color: 'Green' },
+        buildUser({}),
+      );
+
+      expect(result.vehicle.color).toBe('Green');
+      expect(result.vehicle.plate).toBe('KEEP-777-EF');
+      expect(result.vehicle.type).toBe(VehicleType.MOTORCYCLE);
+    });
+
+    it('clears color when explicitly set to null', async () => {
+      const vehicle = buildVehicle({
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: 'profile-1',
+        color: 'Blue',
+      });
+      setupOwned(vehicle);
+
+      const result = await service.updateForUser(
+        VEHICLE_ID,
+        { color: null },
+        buildUser({}),
+      );
+
+      expect(result.vehicle.color).toBeNull();
+    });
+
+    it('rejects a caller who does not own the vehicle (403 via findByIdForUser)', async () => {
+      (vehicleRepo.findOne as jest.Mock).mockResolvedValue(
+        buildVehicle({
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+        }),
+      );
+      (driverProfileRepo.findOne as jest.Mock).mockResolvedValue(
+        buildProfile({ id: 'profile-2' }),
+      );
+
+      await expect(
+        service.updateForUser(VEHICLE_ID, { color: 'Red' }, buildUser({})),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(vehicleRepo.save).not.toHaveBeenCalled();
+    });
+
+    describe('F2 pending-update fork', () => {
+      function buildForkService(pendingStub: { submitForVehicle: jest.Mock }) {
+        return new VehiclesService(
+          vehicleRepo,
+          driverProfileRepo,
+          dataSource as unknown as DataSource,
+          new ApprovalsService({
+            find: jest.fn(),
+            findAndCount: jest.fn(),
+          } as never),
+          pendingStub as never,
+        );
+      }
+
+      it('regulatory edit on an APPROVED vehicle stages a pending row, leaves plate untouched', async () => {
+        const vehicle = buildVehicle({
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+          plate: 'OLD-111-AB',
+          status: VehicleStatus.APPROVED,
+        });
+        setupOwned(vehicle);
+        const submit = jest.fn().mockResolvedValue(undefined);
+        const forkService = buildForkService({ submitForVehicle: submit });
+
+        const result = await forkService.updateForUser(
+          VEHICLE_ID,
+          { plate: 'NEW-222-CD' },
+          buildUser({}),
+        );
+
+        expect(result.forked).toBe(true);
+        // Live row's plate did NOT change.
+        expect(result.vehicle.plate).toBe('OLD-111-AB');
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit.mock.calls[0][1]).toEqual({
+          plate: 'NEW-222-CD',
+          type: undefined,
+        });
+      });
+
+      it('regulatory edit on an ACTIVE vehicle also forks', async () => {
+        const vehicle = buildVehicle({
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+          plate: 'OLD-111-AB',
+          type: VehicleType.MOTORCYCLE,
+          status: VehicleStatus.ACTIVE,
+        });
+        setupOwned(vehicle);
+        const submit = jest.fn().mockResolvedValue(undefined);
+        const forkService = buildForkService({ submitForVehicle: submit });
+
+        const result = await forkService.updateForUser(
+          VEHICLE_ID,
+          { type: VehicleType.CAR },
+          buildUser({}),
+        );
+
+        expect(result.forked).toBe(true);
+        expect(result.vehicle.type).toBe(VehicleType.MOTORCYCLE);
+        expect(submit.mock.calls[0][1]).toEqual({
+          plate: undefined,
+          type: VehicleType.CAR,
+        });
+      });
+
+      it('cosmetic-only edit on an APPROVED vehicle still applies directly (no fork)', async () => {
+        const vehicle = buildVehicle({
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+          color: 'Black',
+          status: VehicleStatus.APPROVED,
+        });
+        setupOwned(vehicle);
+        const submit = jest.fn().mockResolvedValue(undefined);
+        const forkService = buildForkService({ submitForVehicle: submit });
+
+        const result = await forkService.updateForUser(
+          VEHICLE_ID,
+          { color: 'Red' },
+          buildUser({}),
+        );
+
+        expect(result.forked).toBe(false);
+        expect(result.vehicle.color).toBe('Red');
+        expect(submit).not.toHaveBeenCalled();
+      });
+
+      it('cosmetic + regulatory mixed: cosmetic applies live, regulatory forks', async () => {
+        const vehicle = buildVehicle({
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+          color: 'Black',
+          plate: 'OLD-111-AB',
+          status: VehicleStatus.APPROVED,
+        });
+        setupOwned(vehicle);
+        const submit = jest.fn().mockResolvedValue(undefined);
+        const forkService = buildForkService({ submitForVehicle: submit });
+
+        const result = await forkService.updateForUser(
+          VEHICLE_ID,
+          { color: 'Red', plate: 'NEW-222-CD' },
+          buildUser({}),
+        );
+
+        expect(result.forked).toBe(true);
+        // Cosmetic delta applied to the live row.
+        expect(result.vehicle.color).toBe('Red');
+        // Regulatory delta NOT applied to the live row — staged only.
+        expect(result.vehicle.plate).toBe('OLD-111-AB');
+        expect(submit).toHaveBeenCalledTimes(1);
+      });
+
+      it('regulatory plate equal to current (case-insensitive) is a no-op, no fork', async () => {
+        const vehicle = buildVehicle({
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+          plate: 'KEEP-777-EF',
+          status: VehicleStatus.APPROVED,
+        });
+        setupOwned(vehicle);
+        const submit = jest.fn().mockResolvedValue(undefined);
+        const forkService = buildForkService({ submitForVehicle: submit });
+
+        const result = await forkService.updateForUser(
+          VEHICLE_ID,
+          { plate: 'keep-777-ef' },
+          buildUser({}),
+        );
+
+        expect(result.forked).toBe(false);
+        expect(submit).not.toHaveBeenCalled();
+      });
     });
   });
 

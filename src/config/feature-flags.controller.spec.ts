@@ -13,12 +13,14 @@ describe('FeatureFlagsController', () => {
   let controller: FeatureFlagsController;
   let configService: {
     getBoolean: jest.Mock;
+    getString: jest.Mock;
     update: jest.Mock;
   };
 
   beforeEach(async () => {
     configService = {
-      getBoolean: jest.fn(),
+      getBoolean: jest.fn().mockResolvedValue(true),
+      getString: jest.fn().mockResolvedValue('continue'),
       update: jest.fn(),
     };
 
@@ -36,48 +38,66 @@ describe('FeatureFlagsController', () => {
   });
 
   describe('GET /config/feature-flags', () => {
-    it('returns { useMapView: true } when config value is true', async () => {
-      configService.getBoolean.mockResolvedValue(true);
+    it('returns { useMapView: true, vehicleEditGraceMode: "continue" } when both config values default', async () => {
+      configService.getBoolean.mockResolvedValueOnce(true);
+      configService.getString.mockResolvedValueOnce('continue');
 
       const result = await controller.get();
 
-      expect(result).toEqual({ useMapView: true });
+      expect(result).toEqual({
+        useMapView: true,
+        vehicleEditGraceMode: 'continue',
+      });
       expect(configService.getBoolean).toHaveBeenCalledWith(
         ConfigKey.USE_MAP_VIEW,
         true,
       );
-    });
-
-    it('returns { useMapView: false } when config value is false', async () => {
-      configService.getBoolean.mockResolvedValue(false);
-
-      const result = await controller.get();
-
-      expect(result).toEqual({ useMapView: false });
-    });
-
-    it('uses default true when the config key is missing', async () => {
-      // The default is enforced by SystemConfigService.getBoolean, which the
-      // controller passes `true` as default. Mock returns the default-applied value.
-      configService.getBoolean.mockResolvedValue(true);
-
-      const result = await controller.get();
-
-      expect(result).toEqual({ useMapView: true });
-      expect(configService.getBoolean).toHaveBeenCalledWith(
-        ConfigKey.USE_MAP_VIEW,
-        true,
+      expect(configService.getString).toHaveBeenCalledWith(
+        ConfigKey.VEHICLE_EDIT_GRACE_MODE,
+        'continue',
       );
+    });
+
+    it('returns vehicleEditGraceMode: "lock" when the config value is "lock"', async () => {
+      configService.getBoolean.mockResolvedValueOnce(true);
+      configService.getString.mockResolvedValueOnce('lock');
+
+      const result = await controller.get();
+
+      expect(result).toEqual({
+        useMapView: true,
+        vehicleEditGraceMode: 'lock',
+      });
+    });
+
+    it('collapses any unknown grace-mode value to "continue" (safer default)', async () => {
+      configService.getBoolean.mockResolvedValueOnce(true);
+      configService.getString.mockResolvedValueOnce('garbage');
+
+      const result = await controller.get();
+
+      expect(result.vehicleEditGraceMode).toBe('continue');
+    });
+
+    it('returns { useMapView: false } when USE_MAP_VIEW is off', async () => {
+      configService.getBoolean.mockResolvedValueOnce(false);
+      configService.getString.mockResolvedValueOnce('continue');
+
+      const result = await controller.get();
+
+      expect(result.useMapView).toBe(false);
     });
   });
 
   describe('PUT /config/feature-flags', () => {
-    it('updates the USE_MAP_VIEW config to false and returns the new state', async () => {
+    it('updates only useMapView when only useMapView is present in the body', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean.mockResolvedValue(false);
+      configService.getBoolean.mockResolvedValueOnce(false);
+      configService.getString.mockResolvedValueOnce('continue');
 
       const result = await controller.update({ useMapView: false });
 
+      expect(configService.update).toHaveBeenCalledTimes(1);
       expect(configService.update).toHaveBeenCalledWith(
         ConfigKey.USE_MAP_VIEW,
         {
@@ -86,24 +106,42 @@ describe('FeatureFlagsController', () => {
           dataType: 'boolean',
         },
       );
-      expect(result).toEqual({ useMapView: false });
+      expect(result).toEqual({
+        useMapView: false,
+        vehicleEditGraceMode: 'continue',
+      });
     });
 
-    it('updates the USE_MAP_VIEW config to true and returns the new state', async () => {
+    it('updates only vehicleEditGraceMode when only that field is present', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean.mockResolvedValue(true);
+      configService.getBoolean.mockResolvedValueOnce(true);
+      configService.getString.mockResolvedValueOnce('lock');
 
-      const result = await controller.update({ useMapView: true });
+      const result = await controller.update({ vehicleEditGraceMode: 'lock' });
 
+      expect(configService.update).toHaveBeenCalledTimes(1);
       expect(configService.update).toHaveBeenCalledWith(
-        ConfigKey.USE_MAP_VIEW,
+        ConfigKey.VEHICLE_EDIT_GRACE_MODE,
         {
-          key: ConfigKey.USE_MAP_VIEW,
-          value: 'true',
-          dataType: 'boolean',
+          key: ConfigKey.VEHICLE_EDIT_GRACE_MODE,
+          value: 'lock',
+          dataType: 'string',
         },
       );
-      expect(result).toEqual({ useMapView: true });
+      expect(result.vehicleEditGraceMode).toBe('lock');
+    });
+
+    it('updates both fields when both are present in the body', async () => {
+      configService.update.mockResolvedValue(undefined);
+      configService.getBoolean.mockResolvedValueOnce(true);
+      configService.getString.mockResolvedValueOnce('continue');
+
+      await controller.update({
+        useMapView: true,
+        vehicleEditGraceMode: 'continue',
+      });
+
+      expect(configService.update).toHaveBeenCalledTimes(2);
     });
   });
 });
@@ -117,6 +155,7 @@ describe('FeatureFlagsController routing (integration)', () => {
   let app: INestApplication<App>;
   let configService: {
     getBoolean: jest.Mock;
+    getString: jest.Mock;
     update: jest.Mock;
     get: jest.Mock;
   };
@@ -131,6 +170,7 @@ describe('FeatureFlagsController routing (integration)', () => {
   beforeEach(async () => {
     configService = {
       getBoolean: jest.fn().mockResolvedValue(true),
+      getString: jest.fn().mockResolvedValue('continue'),
       update: jest.fn().mockResolvedValue(undefined),
       get: jest.fn().mockResolvedValue('some-value'),
     };
@@ -160,7 +200,10 @@ describe('FeatureFlagsController routing (integration)', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ useMapView: true });
+    expect(response.body).toEqual({
+      useMapView: true,
+      vehicleEditGraceMode: 'continue',
+    });
     // The mock on FeatureFlagsController's collaborator was hit.
     expect(configService.getBoolean).toHaveBeenCalledWith(
       ConfigKey.USE_MAP_VIEW,

@@ -10,6 +10,13 @@ import { Wallet } from './wallet.entity';
 import { Order } from '../../orders/entities/order.entity';
 import type { Naira } from '../../common/money';
 import { nairaTransformer } from '../../common/money';
+import { PaymentMethod } from '../enums/payment-method.enum';
+
+// G4 — PaymentMethod was inlined here pre-G4; it's now shared with the
+// Order entity via wallet/enums/payment-method.enum.ts. Re-export to
+// keep `import { PaymentMethod } from '../entities/transaction.entity'`
+// working for the dozen existing call sites.
+export { PaymentMethod };
 
 export enum TransactionType {
   CREDIT = 'credit',
@@ -21,13 +28,6 @@ export enum TransactionStatus {
   COMPLETED = 'completed',
   FAILED = 'failed',
   REVERSED = 'reversed',
-}
-
-export enum PaymentMethod {
-  CASH = 'cash',
-  CARD = 'card',
-  BANK_TRANSFER = 'bank_transfer',
-  WALLET = 'wallet',
 }
 
 @Entity('transactions')
@@ -69,6 +69,15 @@ export class Transaction {
     transformer: nairaTransformer,
   })
   commission: Naira;
+
+  /**
+   * G5 — commission percentage applied at the time this row settled.
+   * Stored alongside the absolute `commission` Naira amount so a future
+   * rate change cannot retroactively rewrite historical splits. Nullable
+   * for pre-G5 rows that pre-date the rate-locking contract.
+   */
+  @Column('decimal', { precision: 5, scale: 2, nullable: true })
+  commissionPct: string | null;
 
   @Column('decimal', {
     precision: 12,

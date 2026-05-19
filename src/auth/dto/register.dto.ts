@@ -9,6 +9,7 @@ import {
 import { Transform } from 'class-transformer';
 import type { TransformFnParams } from 'class-transformer';
 import { UserRole } from '../../common/enums/user-role.enum';
+import { DriverAccountType } from '../../drivers/entities/driver-profile.entity';
 import { ApiProperty } from '@nestjs/swagger';
 import { normalizeNigerianPhone } from '../../common/utils/phone';
 
@@ -77,4 +78,19 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   inviteToken?: string;
+
+  // Lets the register screen distinguish individual drivers from company
+  // owners up front. Only meaningful when role=driver; the service
+  // ignores it for customers and refuses company_employee here (that
+  // bucket is reserved for the invite flow, which sets it server-side).
+  @ApiProperty({
+    enum: DriverAccountType,
+    example: DriverAccountType.INDIVIDUAL,
+    description:
+      'Optional driver account type. Only used when role=driver. company_employee is rejected here — use the invite flow instead.',
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(DriverAccountType)
+  accountType?: DriverAccountType;
 }
