@@ -62,4 +62,19 @@ export class RegisterDto {
     message: 'phone must be a valid Nigerian phone number',
   })
   phone?: string;
+
+  // D4 — driver_invite token captured from the SMS deep link. When
+  // present, AuthService.register redeems it inside the same
+  // transaction that creates the User + DriverProfile and links the
+  // new driver to the inviting company. Role is automatically
+  // narrowed to DRIVER + accountType=company_employee.
+  @ApiProperty({
+    example: 'b6f1a3a7-1d11-4a83-9e2c-7f7a4f0d6e88',
+    description:
+      'Optional driver invite token. If provided, the new driver is pre-linked to the inviting company and the invite is marked used.',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  inviteToken?: string;
 }

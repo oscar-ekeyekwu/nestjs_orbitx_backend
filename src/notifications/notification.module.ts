@@ -33,6 +33,8 @@ import { RealtimeModule } from '../realtime/realtime.module';
     NotificationsService,
     NotificationTemplateService,
     PushFanoutService,
+    // D4: InvitesService dispatches SMS via the shared sender.
+    SmsService,
   ],
 })
 export class NotificationsModule {}

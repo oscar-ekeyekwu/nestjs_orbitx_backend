@@ -10,6 +10,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { EmailModule } from '../email/email.module';
+import { InvitesModule } from '../invites/invites.module';
 
 @Module({
   imports: [
@@ -19,6 +20,9 @@ import { EmailModule } from '../email/email.module';
     // the same transaction as the User when a driver registers (story A3).
     DriversModule,
     EmailModule,
+    // D4 — InvitesService.redeemInTransaction is called from
+    // AuthService.register when an inviteToken is present.
+    InvitesModule,
     ConfigModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
 

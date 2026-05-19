@@ -9,6 +9,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { UsersService } from '../users/users.service';
 import { DriversService } from '../drivers/drivers.service';
+import { InvitesService } from '../invites/invites.service';
+import {
+  CompanyMembership,
+  CompanyMembershipRole,
+  CompanyMembershipStatus,
+} from '../companies/entities/company-membership.entity';
+import {
+  DriverAccountType,
+  DriverProfile,
+} from '../drivers/entities/driver-profile.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -32,6 +42,7 @@ export class AuthService {
     private dataSource: DataSource,
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
+    private invitesService: InvitesService,
   ) {}
 
   async register(
@@ -43,9 +54,49 @@ export class AuthService {
     // database transaction so a partial-failure run never leaves an orphan
     // User without a profile or vice versa. Fixes story A3 silent-go-online
     // bug at the root.
+    //
+    // D4 — if an inviteToken is present, the same transaction also
+    // redeems the invite, links the new driver_profile to the inviting
+    // company, and writes a pending company_memberships row. Token
+    // validation throws INVITE_001/002/003 which surfaces as 400.
+    const inviteToken = registerDto.inviteToken;
+    const dtoForUser: RegisterDto = { ...registerDto };
+    if (inviteToken) {
+      // Invitees are always drivers + company_employees regardless of
+      // what the client sent. Override before persisting.
+      dtoForUser.role = UserRole.DRIVER;
+    }
+
     const user = await this.dataSource.transaction(async (manager) => {
-      const newUser = await this.usersService.create(registerDto, manager);
-      if (newUser.role === UserRole.DRIVER) {
+      const newUser = await this.usersService.create(dtoForUser, manager);
+
+      if (inviteToken) {
+        const { companyId } = await this.invitesService.redeemInTransaction(
+          manager,
+          inviteToken,
+          newUser.id,
+        );
+        const profile = await this.driversService.createProfile(
+          newUser.id,
+          manager,
+        );
+        // Link the profile to the inviting company + flip to
+        // company_employee. Profile.id is fresh from createProfile;
+        // update through the same manager.
+        await manager.update(DriverProfile, profile.id, {
+          companyId,
+          accountType: DriverAccountType.COMPANY_EMPLOYEE,
+        });
+        // Pending membership row — admin approval of the driver's
+        // verification flips it to APPROVED downstream (C5 hook
+        // candidate; manual for now).
+        await manager.insert(CompanyMembership, {
+          driverId: newUser.id,
+          companyId,
+          role: CompanyMembershipRole.EMPLOYEE,
+          status: CompanyMembershipStatus.PENDING,
+        });
+      } else if (newUser.role === UserRole.DRIVER) {
         await this.driversService.createProfile(newUser.id, manager);
       }
       return newUser;

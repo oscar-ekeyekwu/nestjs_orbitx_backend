@@ -90,6 +90,13 @@ export const ErrorCodes = {
   FILE_004: 'FILE_NOT_FOUND',
   FILE_005: 'FILE_TOO_LARGE',
 
+  // Invite errors (INVITE_xxx)
+  // D4: driver_invites token validation failures. Surfaced from
+  // AuthService.register and InvitesService.redeem alike.
+  INVITE_001: 'INVITE_EXPIRED',
+  INVITE_002: 'INVITE_ALREADY_USED',
+  INVITE_003: 'INVITE_INVALID',
+
   // Document errors (DOCUMENT_xxx)
   // C2: expiry-date document type (driver_license / insurance /
   // roadworthy etc.) was POSTed without an expiryDate. The caller
