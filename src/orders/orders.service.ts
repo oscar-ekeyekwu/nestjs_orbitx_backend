@@ -225,6 +225,37 @@ export class OrdersService {
     return order;
   }
 
+  /**
+   * Caller-scoped variant of `findOne`. Customers can only fetch orders
+   * they placed; drivers can only fetch orders they were assigned to;
+   * admins always pass. Throws ForbiddenException with no distinguishing
+   * message between "not found" and "not yours" so the endpoint can't
+   * be used to probe for valid order ids belonging to someone else.
+   *
+   * E2 — gates exposure of `driver.phone` to a customer who is not the
+   * order owner (the relation loads driver info that the controller
+   * serializes to the caller).
+   */
+  async findOneScoped(
+    id: string,
+    callerUserId: string,
+    callerRole: UserRole,
+  ): Promise<Order> {
+    const order = await this.findOne(id);
+
+    if (callerRole === UserRole.ADMIN) {
+      return order;
+    }
+    if (callerRole === UserRole.CUSTOMER && order.customerId === callerUserId) {
+      return order;
+    }
+    if (callerRole === UserRole.DRIVER && order.driverId === callerUserId) {
+      return order;
+    }
+
+    throw new ForbiddenException('Not authorized to view this order');
+  }
+
   async acceptOrder(orderId: string, driverId: string): Promise<Order> {
     // Balance gate runs BEFORE the lock so a broke driver doesn't hold
     // the row open while the wallet check runs.

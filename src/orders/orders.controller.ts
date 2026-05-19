@@ -53,8 +53,11 @@ export class OrdersController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.ordersService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: User) {
+    // E2 — scoped lookup so a customer cannot enumerate other customers'
+    // orders and read the assigned driver's phone number. Drivers are
+    // similarly limited to their own orders; admins pass.
+    return this.ordersService.findOneScoped(id, user.id, user.role);
   }
 
   @Post(':id/accept')
