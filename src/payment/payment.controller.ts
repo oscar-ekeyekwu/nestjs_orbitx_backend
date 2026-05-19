@@ -2,8 +2,10 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Post,
   Headers,
+  Param,
   Req,
   HttpCode,
   HttpStatus,
@@ -61,6 +63,29 @@ export class PaymentController {
       user.id,
       user.email,
     );
+  }
+
+  // G1 — manual verify after the mobile WebView's hosted-page callback.
+  // Customers can only verify their own transactions; admins (e.g. for
+  // ops triage) can verify any reference.
+  @Get('verify/:reference')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Verify a Paystack reference. Compensates for missed webhooks; idempotent.',
+  })
+  async verify(
+    @Param('reference') reference: string,
+    @CurrentUser() user: User,
+  ) {
+    if (user.role !== UserRole.CUSTOMER && user.role !== UserRole.ADMIN) {
+      throw new BadRequestException('Only customers or admins can verify.');
+    }
+    return this.paymentService.verifyOrderPayment(reference, {
+      id: user.id,
+      role: user.role as 'customer' | 'admin',
+    });
   }
 
   @Post('webhook/paystack')

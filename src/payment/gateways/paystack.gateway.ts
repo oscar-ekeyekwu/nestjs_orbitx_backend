@@ -5,6 +5,7 @@ import type {
   InitializePaymentInput,
   InitializePaymentResult,
   IPaymentGateway,
+  VerifyPaymentResult,
   VirtualAccountResult,
   WebhookEvent,
   WebhookEventMetadata,
@@ -41,6 +42,13 @@ interface PaystackInitializeResponse {
   access_code: string;
   reference: string;
   authorization_url: string;
+}
+
+interface PaystackVerifyResponse {
+  reference: string;
+  /** Paystack returns 'success', 'failed', 'abandoned', 'pending', etc. */
+  status: string;
+  amount: number; // kobo
 }
 
 @Injectable()
@@ -183,6 +191,41 @@ export class PaystackGateway implements IPaymentGateway {
       accessCode: envelope.data.access_code,
       reference: envelope.data.reference,
       authorizationUrl: envelope.data.authorization_url,
+    };
+  }
+
+  /**
+   * G1 — defensive re-check called when the mobile client returns from
+   * the hosted page. Paystack `/transaction/verify/:reference` is
+   * idempotent on their side; we map their string `status` into our
+   * narrow union.
+   */
+  async verifyPayment(reference: string): Promise<VerifyPaymentResult> {
+    const res = await fetch(
+      `${this.baseUrl}/transaction/verify/${encodeURIComponent(reference)}`,
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.secretKey}` },
+      },
+    );
+    const envelope =
+      (await res.json()) as PaystackEnvelope<PaystackVerifyResponse>;
+    if (!envelope.status || !envelope.data) {
+      throw new Error(
+        `Paystack verify failed: ${envelope.message ?? 'Unknown error'}`,
+      );
+    }
+    const raw = envelope.data.status;
+    const status: VerifyPaymentResult['status'] =
+      raw === 'success'
+        ? 'success'
+        : raw === 'failed' || raw === 'abandoned'
+          ? 'failed'
+          : 'pending';
+    return {
+      reference: envelope.data.reference,
+      status,
+      amount: envelope.data.amount / 100,
     };
   }
 

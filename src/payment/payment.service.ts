@@ -21,12 +21,25 @@ import { NAIRA_ZERO, naira, type Naira } from '../common/money';
 import type {
   InitializePaymentResult,
   IPaymentGateway,
+  VerifyPaymentResult,
   VirtualAccountResult,
   WebhookEvent,
 } from './interfaces/payment-gateway.interface';
 
 export interface InitializeOrderPaymentResult extends InitializePaymentResult {
   transactionId: string;
+}
+
+/**
+ * G1 — verify response shape returned to the mobile client. Mirrors
+ * the underlying Transaction status, since after settlement that's the
+ * source of truth (Paystack might still report 'pending' for a few
+ * seconds before their state catches up).
+ */
+export interface VerifyOrderPaymentResult {
+  reference: string;
+  status: 'completed' | 'failed' | 'pending';
+  orderId: string | null;
 }
 
 /**
@@ -189,6 +202,89 @@ export class PaymentService {
 
     // Best-effort downstream notification — fires AFTER the txn commits.
     this.eventEmitter.emit('payment.succeeded', { reference });
+  }
+
+  /**
+   * G1 — manual verify path called by the mobile client when it
+   * returns from the Paystack hosted page. Defends against missed /
+   * delayed webhooks: if the local Transaction is still pending, ask
+   * Paystack and reconcile through the same idempotent code paths the
+   * webhook uses.
+   *
+   * Caller must be the customer who owns the transaction, mirrored
+   * via order.customerId. Admins are allowed through for ops support.
+   */
+  async verifyOrderPayment(
+    reference: string,
+    caller: { id: string; role: 'customer' | 'driver' | 'admin' },
+  ): Promise<VerifyOrderPaymentResult> {
+    const txn = await this.transactionsRepo.findOne({
+      where: { id: reference },
+      relations: ['order'],
+    });
+    if (!txn) {
+      throw new NotFoundException('Transaction not found');
+    }
+    if (caller.role !== 'admin' && txn.order?.customerId !== caller.id) {
+      throw new ForbiddenException(
+        'Only the order customer can verify this payment.',
+      );
+    }
+
+    // Already terminal — trust the local row over a fresh Paystack lookup.
+    if (txn.status === TransactionStatus.COMPLETED) {
+      return {
+        reference: txn.id,
+        status: 'completed',
+        orderId: txn.orderId ?? null,
+      };
+    }
+    if (txn.status === TransactionStatus.FAILED) {
+      return {
+        reference: txn.id,
+        status: 'failed',
+        orderId: txn.orderId ?? null,
+      };
+    }
+
+    // Still pending — query Paystack and reconcile.
+    let remote: VerifyPaymentResult;
+    try {
+      remote = await this.gateway.verifyPayment(reference);
+    } catch (err) {
+      this.logger.warn(
+        `Paystack verify failed for ${reference}; staying pending: ${err}`,
+      );
+      return {
+        reference,
+        status: 'pending',
+        orderId: txn.orderId ?? null,
+      };
+    }
+
+    if (remote.status === 'success') {
+      await this.settleSuccessfulCharge(reference);
+      return {
+        reference,
+        status: 'completed',
+        orderId: txn.orderId ?? null,
+      };
+    }
+    if (remote.status === 'failed') {
+      await this.markChargeFailed(reference);
+      return {
+        reference,
+        status: 'failed',
+        orderId: txn.orderId ?? null,
+      };
+    }
+    // Paystack still pending — return as-is; another verify call later
+    // (or the webhook) will close the loop.
+    return {
+      reference,
+      status: 'pending',
+      orderId: txn.orderId ?? null,
+    };
   }
 
   /**

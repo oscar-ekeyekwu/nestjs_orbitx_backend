@@ -87,6 +87,7 @@ describe('PaymentService (ARCH-13)', () => {
         reference: 'txn-1',
         authorizationUrl: 'https://paystack.test/checkout/AC-1',
       }),
+      verifyPayment: jest.fn(),
       verifyWebhookSignature: jest.fn(),
       parseWebhookEvent: jest.fn(),
     };
@@ -257,6 +258,167 @@ describe('PaymentService (ARCH-13)', () => {
       await service.markChargeFailed('txn-1');
 
       expect(transactionsRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('verifyOrderPayment (G1)', () => {
+    it('short-circuits when the local row is already COMPLETED', async () => {
+      const txn = buildTransaction({ status: TransactionStatus.COMPLETED });
+      transactionsRepo.findOne.mockResolvedValueOnce({
+        ...txn,
+        order: { customerId: 'customer-1' },
+      });
+
+      const out = await service.verifyOrderPayment('txn-1', {
+        id: 'customer-1',
+        role: 'customer',
+      });
+
+      expect(out.status).toBe('completed');
+      expect(gateway.verifyPayment).not.toHaveBeenCalled();
+    });
+
+    it('short-circuits when the local row is already FAILED', async () => {
+      const txn = buildTransaction({ status: TransactionStatus.FAILED });
+      transactionsRepo.findOne.mockResolvedValueOnce({
+        ...txn,
+        order: { customerId: 'customer-1' },
+      });
+
+      const out = await service.verifyOrderPayment('txn-1', {
+        id: 'customer-1',
+        role: 'customer',
+      });
+
+      expect(out.status).toBe('failed');
+      expect(gateway.verifyPayment).not.toHaveBeenCalled();
+    });
+
+    it('reconciles a PENDING row via gateway and settles on success', async () => {
+      const txn = buildTransaction({ status: TransactionStatus.PENDING });
+      transactionsRepo.findOne.mockResolvedValueOnce({
+        ...txn,
+        order: { customerId: 'customer-1' },
+      });
+      gateway.verifyPayment.mockResolvedValueOnce({
+        reference: 'txn-1',
+        status: 'success',
+        amount: 4500,
+      });
+      // settleSuccessfulCharge runs in a transaction.
+      txManager.findOne
+        .mockResolvedValueOnce(txn)
+        .mockResolvedValueOnce(buildWallet());
+
+      const out = await service.verifyOrderPayment('txn-1', {
+        id: 'customer-1',
+        role: 'customer',
+      });
+
+      expect(out.status).toBe('completed');
+      expect(gateway.verifyPayment).toHaveBeenCalledWith('txn-1');
+    });
+
+    it('reconciles a PENDING row via gateway and fails on failure', async () => {
+      const pendingTxn = buildTransaction({
+        status: TransactionStatus.PENDING,
+      });
+      transactionsRepo.findOne
+        .mockResolvedValueOnce({
+          ...pendingTxn,
+          order: { customerId: 'customer-1' },
+        })
+        // Second findOne is from markChargeFailed.
+        .mockResolvedValueOnce(pendingTxn);
+      gateway.verifyPayment.mockResolvedValueOnce({
+        reference: 'txn-1',
+        status: 'failed',
+        amount: 4500,
+      });
+
+      const out = await service.verifyOrderPayment('txn-1', {
+        id: 'customer-1',
+        role: 'customer',
+      });
+
+      expect(out.status).toBe('failed');
+    });
+
+    it('returns pending when Paystack itself still says pending', async () => {
+      const txn = buildTransaction({ status: TransactionStatus.PENDING });
+      transactionsRepo.findOne.mockResolvedValueOnce({
+        ...txn,
+        order: { customerId: 'customer-1' },
+      });
+      gateway.verifyPayment.mockResolvedValueOnce({
+        reference: 'txn-1',
+        status: 'pending',
+        amount: 0,
+      });
+
+      const out = await service.verifyOrderPayment('txn-1', {
+        id: 'customer-1',
+        role: 'customer',
+      });
+
+      expect(out.status).toBe('pending');
+    });
+
+    it('gracefully stays pending if the gateway throws', async () => {
+      const txn = buildTransaction({ status: TransactionStatus.PENDING });
+      transactionsRepo.findOne.mockResolvedValueOnce({
+        ...txn,
+        order: { customerId: 'customer-1' },
+      });
+      gateway.verifyPayment.mockRejectedValueOnce(new Error('paystack down'));
+
+      const out = await service.verifyOrderPayment('txn-1', {
+        id: 'customer-1',
+        role: 'customer',
+      });
+
+      expect(out.status).toBe('pending');
+    });
+
+    it('rejects a non-customer caller', async () => {
+      const txn = buildTransaction({ status: TransactionStatus.PENDING });
+      transactionsRepo.findOne.mockResolvedValueOnce({
+        ...txn,
+        order: { customerId: 'customer-1' },
+      });
+
+      await expect(
+        service.verifyOrderPayment('txn-1', {
+          id: 'someone-else',
+          role: 'customer',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('admins can verify any reference', async () => {
+      const txn = buildTransaction({ status: TransactionStatus.COMPLETED });
+      transactionsRepo.findOne.mockResolvedValueOnce({
+        ...txn,
+        order: { customerId: 'customer-1' },
+      });
+
+      const out = await service.verifyOrderPayment('txn-1', {
+        id: 'admin-1',
+        role: 'admin',
+      });
+
+      expect(out.status).toBe('completed');
+    });
+
+    it('404s for an unknown reference', async () => {
+      transactionsRepo.findOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.verifyOrderPayment('ghost', {
+          id: 'customer-1',
+          role: 'customer',
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 

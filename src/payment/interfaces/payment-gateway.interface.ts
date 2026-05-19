@@ -47,6 +47,17 @@ export interface InitializePaymentResult {
   authorizationUrl: string;
 }
 
+/**
+ * G1 — Paystack verify response. The mobile WebView hits this after
+ * the hosted-page callback so we recover from missed / delayed webhooks.
+ * `amount` is in Naira (gateway converts from kobo).
+ */
+export interface VerifyPaymentResult {
+  reference: string;
+  status: 'success' | 'failed' | 'pending';
+  amount: number;
+}
+
 export interface IPaymentGateway {
   createVirtualAccount(params: {
     userId: string;
@@ -58,6 +69,12 @@ export interface IPaymentGateway {
   initializePayment(
     input: InitializePaymentInput,
   ): Promise<InitializePaymentResult>;
+
+  /**
+   * G1 — re-fetches the canonical Paystack status by reference so the
+   * mobile client can compensate for a missed webhook.
+   */
+  verifyPayment(reference: string): Promise<VerifyPaymentResult>;
 
   verifyWebhookSignature(payload: Buffer, signature: string): boolean;
 
