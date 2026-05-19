@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import type {
+  InitializePaymentInput,
+  InitializePaymentResult,
   IPaymentGateway,
   VirtualAccountResult,
   WebhookEvent,
@@ -33,6 +35,12 @@ interface PaystackChargeSuccessPayload {
     reference: string;
     metadata?: WebhookEventMetadata;
   };
+}
+
+interface PaystackInitializeResponse {
+  access_code: string;
+  reference: string;
+  authorization_url: string;
 }
 
 @Injectable()
@@ -133,6 +141,51 @@ export class PaystackGateway implements IPaymentGateway {
     return data.data.customer_code;
   }
 
+  /**
+   * ARCH-13 — initialize a Paystack transaction for an order. The
+   * caller (PaymentService) has already minted a pending Transaction
+   * row whose id we pass as `reference`; Paystack echoes that
+   * reference back on the webhook so the handler can find the row
+   * without a metadata lookup.
+   *
+   * amount is sent in kobo (Paystack's smallest unit). All money
+   * flowing across the API boundary is integer kobo; never floats.
+   */
+  async initializePayment(
+    input: InitializePaymentInput,
+  ): Promise<InitializePaymentResult> {
+    const amountKobo = Math.round(input.amountNaira * 100);
+    const res = await fetch(`${this.baseUrl}/transaction/initialize`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: amountKobo,
+        email: input.email,
+        reference: input.transactionId,
+        metadata: {
+          orderId: input.orderId,
+          transactionId: input.transactionId,
+        },
+      }),
+    });
+
+    const envelope =
+      (await res.json()) as PaystackEnvelope<PaystackInitializeResponse>;
+    if (!envelope.status || !envelope.data) {
+      throw new Error(
+        `Paystack initialize failed: ${envelope.message ?? 'Unknown error'}`,
+      );
+    }
+    return {
+      accessCode: envelope.data.access_code,
+      reference: envelope.data.reference,
+      authorizationUrl: envelope.data.authorization_url,
+    };
+  }
+
   verifyWebhookSignature(payload: Buffer, signature: string): boolean {
     const hash = crypto
       .createHmac('sha512', this.secretKey)
@@ -144,13 +197,28 @@ export class PaystackGateway implements IPaymentGateway {
   parseWebhookEvent(payload: unknown): WebhookEvent | null {
     if (!payload || typeof payload !== 'object') return null;
     const p = payload as PaystackChargeSuccessPayload;
-    if (p.event === 'charge.success' && p.data) {
+    if (!p.data) return null;
+    const base = {
+      amount: p.data.amount / 100, // Paystack amounts are in kobo
+      reference: p.data.reference,
+      metadata: p.data.metadata,
+    };
+    if (p.event === 'charge.success') {
       return {
+        ...base,
         event: 'payment',
-        amount: p.data.amount / 100, // Paystack amounts are in kobo
-        reference: p.data.reference,
-        metadata: p.data.metadata,
+        // ARCH-13 — order-bound charges carry metadata.orderId or
+        // metadata.transactionId. Virtual-account funding events use
+        // metadata.userId, which keeps `kind: 'payment'` so the
+        // existing wallet-topup handler still fires.
+        kind:
+          base.metadata?.orderId || base.metadata?.transactionId
+            ? 'charge_succeeded'
+            : 'payment',
       };
+    }
+    if (p.event === 'charge.failed') {
+      return { ...base, event: 'payment', kind: 'charge_failed' };
     }
     return null;
   }
