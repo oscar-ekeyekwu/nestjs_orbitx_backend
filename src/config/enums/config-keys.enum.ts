@@ -33,6 +33,11 @@ export enum ConfigKey {
   // manual transfer. Stored as JSON `{ bankName, accountName,
   // accountNumber }` so the admin can update without a deploy.
   PLATFORM_BANK_ACCOUNT = 'PLATFORM_BANK_ACCOUNT',
+
+  // G4 — minimum wallet balance (in Naira) a recipient must hit to be
+  // included in the weekly payout cron. Below the threshold the row
+  // is skipped — the balance rolls over to the next week.
+  MIN_PAYOUT_THRESHOLD = 'MIN_PAYOUT_THRESHOLD',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -127,5 +132,11 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'Static bank account customers transfer to when paying by manual bank transfer (G3). JSON shape: { bankName, accountName, accountNumber }. Admins update via the H8 transfers page.',
     dataType: 'json',
+  },
+  [ConfigKey.MIN_PAYOUT_THRESHOLD]: {
+    value: '1000',
+    description:
+      'Minimum wallet balance (in Naira) a recipient must hit to be included in the weekly payout cron (G4). Balances below the threshold roll over.',
+    dataType: 'number',
   },
 };

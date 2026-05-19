@@ -10,7 +10,7 @@ import {
 import { User } from '../../users/entities/user.entity';
 import type { Naira } from '../../common/money';
 import { nairaTransformer } from '../../common/money';
-import { PaymentMethod } from '../../wallet/entities/transaction.entity';
+import { PaymentMethod } from '../../wallet/enums/payment-method.enum';
 
 export enum OrderStatus {
   PENDING = 'pending',

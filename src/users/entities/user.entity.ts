@@ -54,6 +54,17 @@ export class User {
   @Column({ default: true })
   isActive: boolean;
 
+  /**
+   * G4 — Paystack transfer-recipient code, populated when the user
+   * onboards a payout bank account. Null while no auto-transfer
+   * destination is on file; the cron routes these recipients to the
+   * manual disbursement queue instead. v1 ships without the
+   * onboarding UI for this field — admin populates it manually as
+   * needed; a future story adds the self-serve flow.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  paystackRecipientCode: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

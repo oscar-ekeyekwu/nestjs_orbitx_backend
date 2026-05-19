@@ -22,6 +22,8 @@ import { Order } from '../orders/entities/order.entity';
     },
     PaymentService,
   ],
-  exports: [PaymentService],
+  // G4 — also export the gateway token so PayoutsModule can inject it
+  // via @Inject('PAYMENT_GATEWAY') without re-declaring the provider.
+  exports: [PaymentService, 'PAYMENT_GATEWAY'],
 })
 export class PaymentModule {}

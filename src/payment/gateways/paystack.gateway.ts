@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import type {
+  CreateTransferInput,
+  CreateTransferResult,
   InitializePaymentInput,
   InitializePaymentResult,
   IPaymentGateway,
@@ -49,6 +51,13 @@ interface PaystackVerifyResponse {
   /** Paystack returns 'success', 'failed', 'abandoned', 'pending', etc. */
   status: string;
   amount: number; // kobo
+}
+
+interface PaystackTransferResponse {
+  transfer_code: string;
+  reference: string;
+  /** Paystack returns 'success' | 'pending' | 'failed' | 'reversed'. */
+  status: string;
 }
 
 @Injectable()
@@ -226,6 +235,50 @@ export class PaystackGateway implements IPaymentGateway {
       reference: envelope.data.reference,
       status,
       amount: envelope.data.amount / 100,
+    };
+  }
+
+  /**
+   * G4 — outbound transfer to a recipient subaccount. Amount sent in
+   * kobo. `reference` is the payout.id; passing it on every retry
+   * makes Paystack's API idempotent end-to-end.
+   */
+  async createTransfer(
+    input: CreateTransferInput,
+  ): Promise<CreateTransferResult> {
+    const amountKobo = Math.round(input.amountNaira * 100);
+    const res = await fetch(`${this.baseUrl}/transfer`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        source: 'balance',
+        amount: amountKobo,
+        recipient: input.recipientCode,
+        reference: input.reference,
+        reason: input.reason,
+      }),
+    });
+    const envelope =
+      (await res.json()) as PaystackEnvelope<PaystackTransferResponse>;
+    if (!envelope.status || !envelope.data) {
+      throw new Error(
+        `Paystack transfer failed: ${envelope.message ?? 'Unknown error'}`,
+      );
+    }
+    const rawStatus = envelope.data.status;
+    const status: CreateTransferResult['status'] =
+      rawStatus === 'success'
+        ? 'success'
+        : rawStatus === 'pending'
+          ? 'pending'
+          : 'failed';
+    return {
+      transferCode: envelope.data.transfer_code,
+      reference: envelope.data.reference,
+      status,
     };
   }
 

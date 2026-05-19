@@ -58,6 +58,26 @@ export interface VerifyPaymentResult {
   amount: number;
 }
 
+/**
+ * G4 — outbound transfer to a recipient's Paystack subaccount.
+ * recipientCode is the transfer-recipient identifier Paystack returns
+ * from its /transferrecipient setup endpoint.
+ */
+export interface CreateTransferInput {
+  amountNaira: number;
+  recipientCode: string;
+  /** Unique idempotency key — we pass payout.id so replays are safe. */
+  reference: string;
+  reason: string;
+}
+
+export interface CreateTransferResult {
+  transferCode: string;
+  reference: string;
+  /** 'success' for instant transfers, 'pending' for queued. */
+  status: 'success' | 'pending' | 'failed';
+}
+
 export interface IPaymentGateway {
   createVirtualAccount(params: {
     userId: string;
@@ -75,6 +95,12 @@ export interface IPaymentGateway {
    * mobile client can compensate for a missed webhook.
    */
   verifyPayment(reference: string): Promise<VerifyPaymentResult>;
+
+  /**
+   * G4 — POST /transfer. Returns the transfer code + Paystack's view
+   * of whether it settled synchronously or is queued for processing.
+   */
+  createTransfer(input: CreateTransferInput): Promise<CreateTransferResult>;
 
   verifyWebhookSignature(payload: Buffer, signature: string): boolean;
 
