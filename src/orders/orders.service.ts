@@ -31,6 +31,11 @@ import {
 } from '../wallet/entities/transaction.entity';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import {
+  ApprovalAction,
+  ApprovalDecision,
+  ApprovalTargetType,
+} from '../approvals/entities/approval-decision.entity';
+import {
   PaginatedResult,
   createPaginatedResponse,
 } from '../common/dto/pagination.dto';
@@ -40,7 +45,7 @@ import { NotificationsService } from '../notifications/notification.service';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { User } from '../users/entities/user.entity';
 import Decimal from 'decimal.js';
-import { Naira, naira } from '../common/money';
+import { Naira, NAIRA_ZERO, naira } from '../common/money';
 import { haversineKm } from '../common/geo';
 
 @Injectable()
@@ -123,16 +128,18 @@ export class OrdersService {
       createOrderDto.packageSize,
     );
 
-    // G2 — payment method ships as part of the create DTO; default to
-    // CASH so v0 clients (which don't send the field) keep working.
-    // Status of CASH starts at `pending_cash` (driver still has to
-    // collect); every other channel starts at `pending` (awaiting
-    // webhook / verification).
+    // G2 / G3 — payment method ships as part of the create DTO; default
+    // to CASH so v0 clients (which don't send the field) keep working.
+    //   cash          → pending_cash     (driver collects)
+    //   bank_transfer → pending_transfer (admin reconciles)
+    //   anything else → pending          (Paystack webhook closes it)
     const paymentMethod = createOrderDto.paymentMethod ?? PaymentMethod.CASH;
     const paymentStatus =
       paymentMethod === PaymentMethod.CASH
         ? OrderPaymentStatus.PENDING_CASH
-        : OrderPaymentStatus.PENDING;
+        : paymentMethod === PaymentMethod.BANK_TRANSFER
+          ? OrderPaymentStatus.PENDING_TRANSFER
+          : OrderPaymentStatus.PENDING;
 
     const order = this.ordersRepository.create({
       ...createOrderDto,
@@ -226,11 +233,21 @@ export class OrdersService {
       50,
     );
 
-    // Find pending orders
+    // G3 — exclude orders whose payment is still being arranged
+    // off-platform (pending_transfer for manual bank transfer, plain
+    // pending for Paystack pre-webhook). Cash orders pass through —
+    // the driver collects in person. Reconciled orders (paymentStatus
+    // = pending_cash | completed) become broadcast-eligible.
     const orders = await this.ordersRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.customer', 'customer')
       .where('order.status = :status', { status: OrderStatus.PENDING })
+      .andWhere('order.paymentStatus NOT IN (:...blocked)', {
+        blocked: [
+          OrderPaymentStatus.PENDING,
+          OrderPaymentStatus.PENDING_TRANSFER,
+        ],
+      })
       .orderBy('order.createdAt', 'ASC')
       .getMany();
 
@@ -578,6 +595,138 @@ export class OrdersService {
 
       order.paymentStatus = OrderPaymentStatus.COMPLETED;
       order.finalPrice = fee;
+      return manager.save(order);
+    });
+  }
+
+  /**
+   * G3 — static platform bank account read from system_config so admins
+   * can update without a deploy. Returns the default placeholder when
+   * the JSON is unset / unparseable.
+   */
+  async getPlatformBankAccount(): Promise<{
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+  }> {
+    const raw = await this.configService.getString(
+      ConfigKey.PLATFORM_BANK_ACCOUNT,
+      '',
+    );
+    const fallback = {
+      bankName: 'Pending — set in admin console',
+      accountName: 'Orbit Technologies Ltd',
+      accountNumber: '0000000000',
+    };
+    if (!raw) return fallback;
+    try {
+      const parsed = JSON.parse(raw) as Partial<typeof fallback>;
+      return {
+        bankName: parsed.bankName ?? fallback.bankName,
+        accountName: parsed.accountName ?? fallback.accountName,
+        accountNumber: parsed.accountNumber ?? fallback.accountNumber,
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
+   * G3 — list pending-transfer orders for the admin reconcile queue.
+   * Oldest-first so reviewers FIFO through deposits matching what
+   * shows up in the bank statement.
+   */
+  async listPendingTransfers(opts: {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Order[]; total: number }> {
+    const limit = opts.limit ?? 50;
+    const offset = opts.offset ?? 0;
+    const [items, total] = await this.ordersRepository.findAndCount({
+      where: { paymentStatus: OrderPaymentStatus.PENDING_TRANSFER },
+      relations: ['customer'],
+      order: { createdAt: 'ASC' },
+      take: limit,
+      skip: offset,
+    });
+    return { items, total };
+  }
+
+  /**
+   * G3 — admin matches a bank deposit to an order reference and
+   * reconciles it. Reference is the order id (also exposed to the
+   * customer as the per-order transfer reference at checkout).
+   *
+   * Settlement runs in one transaction:
+   *   - Pessimistic_write lock on the order row.
+   *   - Inserts a Transaction row tagged method=bank_transfer with
+   *     reference + reviewer.
+   *   - Writes an approval_decisions audit row (DR-B4).
+   *   - Flips paymentStatus → COMPLETED so the order becomes
+   *     broadcast-eligible in findAvailableOrders.
+   *
+   * Idempotent — a duplicate reconcile on a COMPLETED row returns the
+   * order untouched. Throws NotFoundException for unknown references
+   * and BadRequestException for non-transfer / wrong-status orders.
+   */
+  async reconcileBankTransfer(reference: string, admin: User): Promise<Order> {
+    return this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id: reference },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) {
+        throw new NotFoundException(
+          'No order found for that reference. Double-check the reference printed on the deposit.',
+        );
+      }
+      if (order.paymentMethod !== PaymentMethod.BANK_TRANSFER) {
+        throw new BadRequestException(
+          'Reconcile only applies to bank-transfer orders.',
+        );
+      }
+      if (order.paymentStatus === OrderPaymentStatus.COMPLETED) {
+        return order;
+      }
+      if (order.paymentStatus !== OrderPaymentStatus.PENDING_TRANSFER) {
+        throw new BadRequestException(
+          `Cannot reconcile a ${order.paymentStatus} order.`,
+        );
+      }
+
+      const customerWallet = await manager.findOne(Wallet, {
+        where: { userId: order.customerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!customerWallet) {
+        throw new NotFoundException('Customer wallet not provisioned.');
+      }
+
+      const amount = order.finalPrice ?? order.estimatedPrice;
+
+      await manager.insert(Transaction, {
+        walletId: customerWallet.id,
+        orderId: order.id,
+        type: TransactionType.CREDIT,
+        amount,
+        commission: NAIRA_ZERO,
+        balanceAfter: customerWallet.balance,
+        status: TransactionStatus.COMPLETED,
+        paymentMethod: PaymentMethod.BANK_TRANSFER,
+        reference,
+        description: `Bank transfer reconciled by admin ${admin.id}`,
+      });
+
+      await manager.insert(ApprovalDecision, {
+        targetType: ApprovalTargetType.ORDER,
+        targetId: order.id,
+        action: ApprovalAction.APPROVE,
+        reviewerId: admin.id,
+        reason: null,
+      });
+
+      order.paymentStatus = OrderPaymentStatus.COMPLETED;
+      order.finalPrice = amount;
       return manager.save(order);
     });
   }

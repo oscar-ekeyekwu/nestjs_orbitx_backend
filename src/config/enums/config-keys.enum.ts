@@ -28,6 +28,11 @@ export enum ConfigKey {
   // stay operational while an edit goes through approval; 'pending'
   // pulls it from dispatch until the admin signs off.
   VEHICLE_EDIT_GRACE_MODE = 'VEHICLE_EDIT_GRACE_MODE',
+
+  // G3 — platform bank account customers transfer to when paying by
+  // manual transfer. Stored as JSON `{ bankName, accountName,
+  // accountNumber }` so the admin can update without a deploy.
+  PLATFORM_BANK_ACCOUNT = 'PLATFORM_BANK_ACCOUNT',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -112,5 +117,15 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'How a vehicle behaves while an edit is awaiting admin review. "continue" = stays operational, "lock" = driver cannot accept orders (VEHICLE_002). Consumed by F2; F3 exposes the toggle in the admin console.',
     dataType: 'string',
+  },
+  [ConfigKey.PLATFORM_BANK_ACCOUNT]: {
+    value: JSON.stringify({
+      bankName: 'Pending — set in admin console',
+      accountName: 'Orbit Technologies Ltd',
+      accountNumber: '0000000000',
+    }),
+    description:
+      'Static bank account customers transfer to when paying by manual bank transfer (G3). JSON shape: { bankName, accountName, accountNumber }. Admins update via the H8 transfers page.',
+    dataType: 'json',
   },
 };

@@ -14,6 +14,7 @@ export enum ApprovalTargetType {
   COMPANY = 'company',
   VEHICLE = 'vehicle',
   DOCUMENT = 'document',
+  ORDER = 'order',
 }
 
 export enum ApprovalAction {

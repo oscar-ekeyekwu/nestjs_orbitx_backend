@@ -44,6 +44,14 @@ export class OrdersController {
     return this.ordersService.findAll(user.id, user.role, query);
   }
 
+  // G3 — static platform bank account for the mobile checkout. Placed
+  // BEFORE @Get(':id') so the static `payment/bank-account` segment
+  // takes precedence over the :id parameterized route.
+  @Get('payment/bank-account')
+  bankAccount() {
+    return this.ordersService.getPlatformBankAccount();
+  }
+
   @Get('available')
   @Roles(UserRole.DRIVER)
   findAvailable(

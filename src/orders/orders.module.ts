@@ -4,6 +4,7 @@ import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
 import { OrderShareService } from './order-share.service';
 import { OrderShareController } from './order-share.controller';
+import { AdminTransfersController } from './admin-transfers.controller';
 import { Order } from './entities/order.entity';
 import { OrderShareToken } from './entities/order-share-token.entity';
 import { UsersModule } from '../users/users.module';
@@ -36,7 +37,11 @@ import { VehiclesModule } from '../vehicles/vehicles.module';
     // the orders/realtime cycle, so a direct import is safe here.
     ReceiptsModule,
   ],
-  controllers: [OrdersController, OrderShareController],
+  controllers: [
+    OrdersController,
+    OrderShareController,
+    AdminTransfersController,
+  ],
   providers: [OrdersService, OrderShareService],
   exports: [OrdersService],
 })

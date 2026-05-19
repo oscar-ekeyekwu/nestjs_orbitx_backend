@@ -28,17 +28,18 @@ export enum PackageSize {
 }
 
 /**
- * G2 — order-level payment lifecycle.
+ * Order-level payment lifecycle.
  *
- * pending_cash: customer chose cash; driver has not yet collected.
- * pending     : Paystack / bank transfer awaiting webhook confirmation.
- * completed   : money received (in driver wallet for cash, in customer
- *               wallet for Paystack — see ARCH-13 settlement).
- * failed      : payment unrecoverable. Order admin reconcile.
+ * pending          : Paystack awaiting webhook confirmation (G1).
+ * pending_cash     : Cash on delivery — driver still to collect (G2).
+ * pending_transfer : Manual bank transfer — admin still to reconcile (G3).
+ * completed        : Money received and accounted for.
+ * failed           : Payment unrecoverable — admin reconcile path.
  */
 export enum OrderPaymentStatus {
   PENDING = 'pending',
   PENDING_CASH = 'pending_cash',
+  PENDING_TRANSFER = 'pending_transfer',
   COMPLETED = 'completed',
   FAILED = 'failed',
 }
