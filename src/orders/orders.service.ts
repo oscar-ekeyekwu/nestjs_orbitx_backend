@@ -7,8 +7,9 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Order, OrderStatus, PackageSize } from './entities/order.entity';
+import { ErrorCodes } from '../common/constants/error-codes';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -39,6 +40,7 @@ export class OrdersService {
     @Inject(forwardRef(() => RealtimeGateway))
     private realtimeGateway: RealtimeGateway,
     private notifications: NotificationsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -103,7 +105,20 @@ export class OrdersService {
 
     const savedOrder = await this.ordersRepository.save(order);
 
-    // Broadcast to drivers so available-orders lists update without polling.
+    // ARCH-12 — narrow the broadcast to the eligible-drivers room
+    // keyed on packageSize so a motorcycle driver isn't woken up for
+    // a truck-sized parcel. The legacy global `new_order_available`
+    // emit stays for now (admin dashboards still listen on it) but
+    // graduates to deprecation once the mobile clients ship the
+    // `order_offered` subscription.
+    this.safeEmit(
+      () =>
+        this.realtimeGateway.emitOrderOffered(
+          savedOrder.packageSize,
+          savedOrder,
+        ),
+      'order_offered',
+    );
     this.safeEmit(
       () => this.realtimeGateway.emitNewOrderToDrivers(savedOrder),
       'new_order_available',
@@ -208,13 +223,8 @@ export class OrdersService {
   }
 
   async acceptOrder(orderId: string, driverId: string): Promise<Order> {
-    const order = await this.findOne(orderId);
-
-    if (order.status !== OrderStatus.PENDING) {
-      throw new BadRequestException('Order is not available');
-    }
-
-    // Check if driver meets minimum balance requirement
+    // Balance gate runs BEFORE the lock so a broke driver doesn't hold
+    // the row open while the wallet check runs.
     const canTakeOrder = await this.walletService.canDriverTakeOrder(driverId);
     if (!canTakeOrder) {
       const minBalance = await this.configService.getNumber(
@@ -226,21 +236,55 @@ export class OrdersService {
       );
     }
 
-    order.driverId = driverId;
-    order.status = OrderStatus.ACCEPTED;
-    order.acceptedAt = new Date();
-
-    await this.ordersRepository.save(order);
-
-    // Deduct security deposit after order is saved
-    await this.walletService.deductSecurityDeposit(driverId, orderId);
-
-    const acceptedOrder = await this.ordersRepository.findOne({
-      where: { id: orderId },
-      relations: ['customer', 'driver'],
+    // ARCH-12 — first-accept-wins via pessimistic_write on the order
+    // row. Two concurrent acceptOrder calls serialize at the DB; the
+    // second transaction's findOne sees status=ACCEPTED and throws
+    // ORDER_004 instead of silently overwriting driverId.
+    const acceptedOrder = await this.dataSource.transaction(async (manager) => {
+      const locked = await manager.findOne(Order, {
+        where: { id: orderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) {
+        throw new NotFoundException('Order not found');
+      }
+      if (locked.status !== OrderStatus.PENDING) {
+        throw new BadRequestException({
+          errorCode: ErrorCodes.ORDER_004,
+          message: 'Order has already been accepted by another driver.',
+        });
+      }
+      locked.driverId = driverId;
+      locked.status = OrderStatus.ACCEPTED;
+      locked.acceptedAt = new Date();
+      await manager.save(locked);
+      return manager.findOne(Order, {
+        where: { id: orderId },
+        relations: ['customer', 'driver'],
+      });
     });
 
+    // Deduct security deposit AFTER the lock releases. If this fails,
+    // the order is still validly accepted; the wallet error surfaces to
+    // the caller and an oncall reviewer reconciles. Inverting the order
+    // (deduct first then save) would risk taking money from a driver
+    // whose lock attempt loses, which is much worse.
+    await this.walletService.deductSecurityDeposit(driverId, orderId);
+
     if (acceptedOrder) {
+      // ARCH-12 — fan out order_taken so other drivers in the eligible
+      // room drop the order from their available list. Sent BEFORE the
+      // customer notification so the losing drivers don't see a stale
+      // "available" entry while the customer toast fires.
+      this.safeEmit(
+        () =>
+          this.realtimeGateway.emitOrderTaken(
+            acceptedOrder.packageSize,
+            orderId,
+          ),
+        'order_taken',
+      );
+
       // Notify the customer directly that their order was accepted, including driver info.
       this.safeEmit(
         () =>

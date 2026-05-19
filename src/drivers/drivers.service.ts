@@ -6,6 +6,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ModuleRef } from '@nestjs/core';
+import { packageSizesForVehicle } from '../orders/package-size.helper';
+// Type-only import — runtime resolution goes through ModuleRef.get to
+// avoid the circular dep between drivers/realtime modules.
+import type { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   DriverProfile,
   DriverVerificationStatus,
@@ -82,6 +87,7 @@ export class DriversService {
     private readonly dataSource: DataSource,
     private readonly approvalsService: ApprovalsService,
     private readonly events: EventEmitter2,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /**
@@ -226,12 +232,51 @@ export class DriversService {
     // B5: going online requires an active assignment to an APPROVED
     // vehicle. Going offline is unconditional — drivers must always be
     // able to drop out, even if their assignment is in flux.
+    let vehicleForRooms: Vehicle | null = null;
     if (isOnline) {
-      await this.assertHasActiveApprovedVehicle(profile.id);
+      vehicleForRooms = await this.assertHasActiveApprovedVehicle(profile.id);
     }
 
     profile.isOnline = isOnline;
-    return this.driverProfileRepository.save(profile);
+    const saved = await this.driverProfileRepository.save(profile);
+
+    // ARCH-12 — sync the driver's socket subscriptions with the
+    // online flip. Gateway lookups use the userId; if the socket
+    // isn't connected yet the helper returns []. Synchronous + cheap;
+    // any throw inside is swallowed so socket bookkeeping can't 500
+    // the HTTP handler.
+    this.syncEligibleRooms(userId, isOnline, vehicleForRooms);
+
+    return saved;
+  }
+
+  private syncEligibleRooms(
+    userId: string,
+    isOnline: boolean,
+    vehicle: Vehicle | null,
+  ): void {
+    let gateway: RealtimeGateway | null = null;
+    try {
+      // The class identity is resolved by Nest at runtime — passing
+      // the string 'RealtimeGateway' lets ModuleRef look it up by
+      // provider name without us having to import the concrete class
+      // (which would re-introduce the drivers ↔ realtime circular dep).
+      gateway = this.moduleRef.get<RealtimeGateway>(
+        'RealtimeGateway' as unknown as never,
+        { strict: false },
+      );
+    } catch {
+      // Gateway not registered (CLI run, isolated unit test). Skip.
+      return;
+    }
+    if (!gateway) return;
+    if (!isOnline) {
+      gateway.leaveDriverFromEligibleRooms(userId);
+      return;
+    }
+    if (!vehicle) return;
+    const sizes = packageSizesForVehicle(vehicle.type);
+    gateway.joinDriverToEligibleRooms(userId, sizes);
   }
 
   /**
@@ -240,7 +285,7 @@ export class DriversService {
    */
   private async assertHasActiveApprovedVehicle(
     driverId: string,
-  ): Promise<void> {
+  ): Promise<Vehicle> {
     const activeAssignment = await this.assignmentRepository.findOne({
       where: { driverId, unassignedAt: IsNull() },
     });
@@ -259,6 +304,7 @@ export class DriversService {
         message: 'Your assigned vehicle is not currently approved.',
       });
     }
+    return vehicle;
   }
 
   /**
