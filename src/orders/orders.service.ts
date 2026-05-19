@@ -39,6 +39,9 @@ export class OrdersService {
     // forwardRef because RealtimeGateway (in RealtimeModule) also depends on OrdersService.
     @Inject(forwardRef(() => RealtimeGateway))
     private realtimeGateway: RealtimeGateway,
+    // forwardRef because NotificationsModule → RealtimeModule → OrdersModule
+    // forms a cycle; the module import is also forwardRef'd in orders.module.ts.
+    @Inject(forwardRef(() => NotificationsService))
     private notifications: NotificationsService,
     private readonly dataSource: DataSource,
   ) {}
