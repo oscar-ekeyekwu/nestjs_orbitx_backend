@@ -270,6 +270,110 @@ describe('VehiclesService (B3)', () => {
     });
   });
 
+  describe('updateForUser (F1)', () => {
+    function setupOwned(vehicle: Vehicle) {
+      (vehicleRepo.findOne as jest.Mock).mockResolvedValue(vehicle);
+      (driverProfileRepo.findOne as jest.Mock).mockResolvedValue(
+        buildProfile({ id: 'profile-1' }),
+      );
+      (vehicleRepo.save as jest.Mock).mockImplementation((v: Vehicle) =>
+        Promise.resolve(v),
+      );
+    }
+
+    it('cosmetic edit (color + photoUrl) applies and persists', async () => {
+      const vehicle = buildVehicle({
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: 'profile-1',
+        color: 'Black',
+        photoUrl: null,
+      });
+      setupOwned(vehicle);
+
+      const result = await service.updateForUser(
+        VEHICLE_ID,
+        { color: 'Red', photoUrl: 'https://cdn/x.jpg' },
+        buildUser({}),
+      );
+
+      expect(result.color).toBe('Red');
+      expect(result.photoUrl).toBe('https://cdn/x.jpg');
+      expect(vehicleRepo.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('regulatory edit (plate) uppercases on the way in', async () => {
+      const vehicle = buildVehicle({
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: 'profile-1',
+        plate: 'OLD-111-AB',
+      });
+      setupOwned(vehicle);
+
+      const result = await service.updateForUser(
+        VEHICLE_ID,
+        { plate: 'new-222-cd' },
+        buildUser({}),
+      );
+
+      expect(result.plate).toBe('NEW-222-CD');
+    });
+
+    it('partial patch leaves untouched fields alone', async () => {
+      const vehicle = buildVehicle({
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: 'profile-1',
+        color: 'Blue',
+        plate: 'KEEP-777-EF',
+        type: VehicleType.MOTORCYCLE,
+      });
+      setupOwned(vehicle);
+
+      const result = await service.updateForUser(
+        VEHICLE_ID,
+        { color: 'Green' },
+        buildUser({}),
+      );
+
+      expect(result.color).toBe('Green');
+      expect(result.plate).toBe('KEEP-777-EF');
+      expect(result.type).toBe(VehicleType.MOTORCYCLE);
+    });
+
+    it('clears color when explicitly set to null', async () => {
+      const vehicle = buildVehicle({
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: 'profile-1',
+        color: 'Blue',
+      });
+      setupOwned(vehicle);
+
+      const result = await service.updateForUser(
+        VEHICLE_ID,
+        { color: null },
+        buildUser({}),
+      );
+
+      expect(result.color).toBeNull();
+    });
+
+    it('rejects a caller who does not own the vehicle (403 via findByIdForUser)', async () => {
+      (vehicleRepo.findOne as jest.Mock).mockResolvedValue(
+        buildVehicle({
+          ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+          ownerId: 'profile-1',
+        }),
+      );
+      (driverProfileRepo.findOne as jest.Mock).mockResolvedValue(
+        buildProfile({ id: 'profile-2' }),
+      );
+
+      await expect(
+        service.updateForUser(VEHICLE_ID, { color: 'Red' }, buildUser({})),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(vehicleRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('submitForApproval', () => {
     const owner = buildUser({});
 

@@ -250,6 +250,33 @@ export class VehiclesService {
   }
 
   /**
+   * F1 — owner self-service edit. Cosmetic fields (color, photoUrl) apply
+   * directly with no state change. Regulatory fields (plate, type) also
+   * apply directly today; F2 wraps this with the pending-update fork so
+   * an `approved` vehicle's regulatory edits are staged on a draft copy
+   * instead of mutating the live row.
+   *
+   * Returns the updated entity. Caller ownership is verified via the
+   * existing `findByIdForUser` gate.
+   */
+  async updateForUser(
+    id: string,
+    dto: import('./dto/update-vehicle.dto').UpdateVehicleDto,
+    caller: User,
+  ): Promise<Vehicle> {
+    const vehicle = await this.findByIdForUser(id, caller);
+
+    if (dto.type !== undefined) vehicle.type = dto.type;
+    if (dto.plate !== undefined) {
+      vehicle.plate = dto.plate.toUpperCase();
+    }
+    if (dto.color !== undefined) vehicle.color = dto.color;
+    if (dto.photoUrl !== undefined) vehicle.photoUrl = dto.photoUrl;
+
+    return this.vehicleRepo.save(vehicle);
+  }
+
+  /**
    * Owner self-service transition `draft → pending_approval`. Validated
    * against vehicleStateMachine like every other transition, but no
    * approval_decisions row is written: the audit ledger is for admin
