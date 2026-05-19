@@ -55,8 +55,9 @@ export const DEFAULT_CONFIG_VALUES: Record<
     dataType: 'number',
   },
   [ConfigKey.DRIVER_COMMISSION_PERCENTAGE]: {
-    value: '20',
-    description: 'Platform commission percentage taken from each delivery',
+    value: '15',
+    description:
+      'Platform commission percentage taken from each completed order (G5). Stored on each transactions.commissionPct row at completion time so retroactive rate changes never rewrite historical splits.',
     dataType: 'number',
   },
   [ConfigKey.ORDER_DELIVERY_RADIUS_KM]: {

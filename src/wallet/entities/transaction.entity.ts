@@ -70,6 +70,15 @@ export class Transaction {
   })
   commission: Naira;
 
+  /**
+   * G5 — commission percentage applied at the time this row settled.
+   * Stored alongside the absolute `commission` Naira amount so a future
+   * rate change cannot retroactively rewrite historical splits. Nullable
+   * for pre-G5 rows that pre-date the rate-locking contract.
+   */
+  @Column('decimal', { precision: 5, scale: 2, nullable: true })
+  commissionPct: string | null;
+
   @Column('decimal', {
     precision: 12,
     scale: 2,

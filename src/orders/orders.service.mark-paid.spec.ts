@@ -73,9 +73,37 @@ describe('OrdersService.markCashCollected (G2)', () => {
       ),
     };
 
+    // G5 — walletService stub. applyCommission(grossFee, override?) is
+    // the only call markCashCollected makes. The stub reads the same
+    // configService.getNumber the legacy tests already mock so the
+    // existing commission expectations stay valid.
+    type NairaLike = import('../common/money').Naira;
+    const walletService = {
+      applyCommission: jest.fn(
+        async (
+          grossFee: NairaLike,
+          override?: number,
+        ): Promise<{
+          driverShare: NairaLike;
+          commission: NairaLike;
+          commissionPct: number;
+        }> => {
+          const pct: number =
+            override ??
+            ((await configService.getNumber(
+              'DRIVER_COMMISSION_PERCENTAGE',
+              0,
+            )) as number);
+          const commission = grossFee.times(pct).dividedBy(100) as NairaLike;
+          const driverShare = grossFee.minus(commission) as NairaLike;
+          return { driverShare, commission, commissionPct: pct };
+        },
+      ),
+    };
+
     service = new OrdersService(
       {} as unknown as Repository<Order>,
-      {} as never,
+      walletService as never,
       configService as never,
       {} as never,
       {} as never,

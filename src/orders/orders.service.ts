@@ -526,11 +526,6 @@ export class OrdersService {
    *    unchanged with paymentStatus already COMPLETED.
    */
   async markCashCollected(orderId: string, driverId: string): Promise<Order> {
-    const commissionPct = await this.configService.getNumber(
-      ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
-      0,
-    );
-
     return this.dataSource.transaction(async (manager) => {
       const order = await manager.findOne(Order, {
         where: { id: orderId },
@@ -565,8 +560,9 @@ export class OrdersService {
       }
 
       const fee = order.finalPrice ?? order.estimatedPrice;
-      const commission = fee.times(commissionPct).dividedBy(100) as Naira;
-      const driverShare = fee.minus(commission) as Naira;
+      // G5 — split via the centralized helper. The rate is captured on
+      // the split result so we can lock it onto the transaction row.
+      const split = await this.walletService.applyCommission(fee);
 
       const driverWallet = await manager.findOne(Wallet, {
         where: { userId: driverId },
@@ -575,9 +571,11 @@ export class OrdersService {
       if (!driverWallet) {
         throw new NotFoundException('Driver wallet not provisioned.');
       }
-      driverWallet.balance = driverWallet.balance.plus(driverShare) as Naira;
+      driverWallet.balance = driverWallet.balance.plus(
+        split.driverShare,
+      ) as Naira;
       driverWallet.totalEarnings = driverWallet.totalEarnings.plus(
-        driverShare,
+        split.driverShare,
       ) as Naira;
       await manager.save(driverWallet);
 
@@ -585,8 +583,9 @@ export class OrdersService {
         walletId: driverWallet.id,
         orderId: order.id,
         type: TransactionType.CREDIT,
-        amount: driverShare,
-        commission,
+        amount: split.driverShare,
+        commission: split.commission,
+        commissionPct: String(split.commissionPct),
         balanceAfter: driverWallet.balance,
         status: TransactionStatus.COMPLETED,
         paymentMethod: PaymentMethod.CASH,

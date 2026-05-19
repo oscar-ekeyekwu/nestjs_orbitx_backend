@@ -21,6 +21,17 @@ import { ConfigKey } from '../config/enums/config-keys.enum';
 import { PaymentService } from '../payment/payment.service';
 import { Naira, NAIRA_ZERO, naira, nairaToJSON } from '../common/money';
 
+/**
+ * G5 — return shape from `WalletService.applyCommission`. Captures the
+ * rate that was used so the caller can lock it onto the row.
+ */
+export interface CommissionSplit {
+  driverShare: Naira;
+  commission: Naira;
+  /** Rate used at split time, expressed as a number (e.g. 15 for 15%). */
+  commissionPct: number;
+}
+
 @Injectable()
 export class WalletService {
   constructor(
@@ -34,6 +45,38 @@ export class WalletService {
     private configService: SystemConfigService,
     private paymentService: PaymentService,
   ) {}
+
+  /**
+   * G5 — single point of truth for splitting a gross delivery fee
+   * into commission + driver share. Reads the live rate from
+   * system_config when not explicitly passed. All arithmetic stays on
+   * Naira / decimal.js per ARCH-1 — never floats.
+   *
+   * Edge cases:
+   *   - 0%      → commission ₦0, full fee to driver.
+   *   - 100%    → entire fee is commission, driver gets ₦0.
+   *   - fractional (e.g. 17.5%) honored at decimal precision.
+   *   - negative or >100 rates throw (config tampering guard).
+   */
+  async applyCommission(
+    grossFee: Naira,
+    overridePct?: number,
+  ): Promise<CommissionSplit> {
+    const pct =
+      overridePct ??
+      (await this.configService.getNumber(
+        ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
+        15,
+      ));
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      throw new Error(
+        `Invalid commission percentage: ${pct}. Must be in [0, 100].`,
+      );
+    }
+    const commission = grossFee.times(pct).dividedBy(100) as Naira;
+    const driverShare = grossFee.minus(commission) as Naira;
+    return { driverShare, commission, commissionPct: pct };
+  }
 
   /**
    * Create a wallet for a user
