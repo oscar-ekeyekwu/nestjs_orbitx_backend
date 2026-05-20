@@ -30,6 +30,7 @@ import { ApprovalsModule } from './approvals/approvals.module';
 import { InvitesModule } from './invites/invites.module';
 import { StorageModule } from './storage/storage.module';
 import { IncidentsModule } from './incidents/incidents.module';
+import { MeModule } from './me/me.module';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -95,6 +96,7 @@ import { IncidentsModule } from './incidents/incidents.module';
     ApprovalsModule,
     InvitesModule,
     IncidentsModule,
+    MeModule,
   ],
   controllers: [],
   providers: [
