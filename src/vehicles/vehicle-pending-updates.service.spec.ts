@@ -75,7 +75,7 @@ describe('VehiclePendingUpdatesService (F2)', () => {
       count: jest.fn(),
       create: jest.fn((row: Partial<VehiclePendingUpdate>) => row),
       save: jest.fn((row: VehiclePendingUpdate) =>
-        Promise.resolve({ id: 'pending-1', ...row }),
+        Promise.resolve({ ...row, id: row.id ?? 'pending-1' }),
       ),
       findAndCount: jest.fn(),
     };
