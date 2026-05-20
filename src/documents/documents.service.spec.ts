@@ -13,10 +13,9 @@ import {
   DocumentType,
   DocumentStatus,
 } from './entities/document.entity';
-import {
-  SpacesStorageService,
-  type PresignedUpload,
-} from './spaces-storage.service';
+import type { PresignedUpload } from '../storage/storage-adapter.interface';
+import type { StorageAdapter } from '../storage/storage-adapter.interface';
+import { StorageRegistry } from '../storage/storage-registry.service';
 import * as polymorphic from '../common/polymorphic';
 import { DocumentExpiryCron } from './document-expiry.cron';
 import { ApprovalsService } from '../approvals/approvals.service';
@@ -52,6 +51,7 @@ function buildDocument(overrides: Partial<Document>): Document {
     fileUrl:
       'https://nyc3.digitaloceanspaces.com/orbit-kyc-v1/user/user-1/drivers_license/abc.jpg',
     fileKey: 'user/user-1/drivers_license/abc.jpg',
+    storageProviderId: 'provider-1',
     expiryDate: null,
     status: DocumentStatus.PENDING,
     uploadedBy: 'user-1',
@@ -80,7 +80,8 @@ function extractErrorCode(err: unknown): string | undefined {
 describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
   let service: DocumentsService;
   let documentRepo: jest.Mocked<Repository<Document>>;
-  let storage: jest.Mocked<SpacesStorageService>;
+  let adapter: jest.Mocked<StorageAdapter>;
+  let storageRegistry: jest.Mocked<StorageRegistry>;
   let dataSource: jest.Mocked<DataSource>;
   let expiryCron: jest.Mocked<DocumentExpiryCron>;
   let loadOwnerSpy: jest.SpyInstance;
@@ -95,15 +96,25 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       ),
     } as unknown as jest.Mocked<Repository<Document>>;
 
-    storage = {
+    adapter = {
+      providerId: 'provider-1',
+      providerSlug: 'spaces-default',
+      bucket: 'orbit-kyc-v1',
       generateUploadUrl: jest.fn(),
       generateViewUrl: jest.fn(),
+      uploadBuffer: jest.fn(),
       objectExists: jest.fn().mockResolvedValue(true),
-      getCanonicalUri: jest.fn(
+      getStream: jest.fn(),
+      delete: jest.fn(),
+      canonicalUri: jest.fn(
         (key: string) =>
           `https://nyc3.digitaloceanspaces.com/orbit-kyc-v1/${key}`,
       ),
-    } as unknown as jest.Mocked<SpacesStorageService>;
+    } as unknown as jest.Mocked<StorageAdapter>;
+    storageRegistry = {
+      getActive: jest.fn().mockResolvedValue(adapter),
+      get: jest.fn().mockResolvedValue(adapter),
+    } as unknown as jest.Mocked<StorageRegistry>;
 
     dataSource = {
       manager: {} as unknown,
@@ -141,7 +152,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
 
     service = new DocumentsService(
       documentRepo,
-      storage,
+      storageRegistry,
       dataSource,
       expiryCron,
       approvalsService,
@@ -166,12 +177,12 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
         uploadUrl: 'https://signed.example/put',
         objectKey: 'user/user-1/drivers_license/uuid.jpg',
       };
-      storage.generateUploadUrl.mockResolvedValue(presigned);
+      adapter.generateUploadUrl.mockResolvedValue(presigned);
 
       const result = await service.generateUploadUrl(dto, DRIVER);
 
       expect(result).toBe(presigned);
-      expect(storage.generateUploadUrl).toHaveBeenCalledWith(dto);
+      expect(adapter.generateUploadUrl).toHaveBeenCalledWith(dto);
     });
 
     it('admin bypasses the owner check', async () => {
@@ -179,7 +190,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
         uploadUrl: 'https://signed.example/put',
         objectKey: 'user/user-1/drivers_license/uuid.jpg',
       };
-      storage.generateUploadUrl.mockResolvedValue(presigned);
+      adapter.generateUploadUrl.mockResolvedValue(presigned);
 
       const result = await service.generateUploadUrl(dto, ADMIN);
 
@@ -190,7 +201,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       await expect(
         service.generateUploadUrl(dto, OTHER_DRIVER),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(storage.generateUploadUrl).not.toHaveBeenCalled();
+      expect(adapter.generateUploadUrl).not.toHaveBeenCalled();
     });
 
     it('rejects non-admin uploading vehicle docs', async () => {
@@ -212,7 +223,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
         uploadUrl: 'https://signed.example/put',
         objectKey: 'vehicle/vehicle-1/vehicle_registration/uuid.pdf',
       };
-      storage.generateUploadUrl.mockResolvedValue(presigned);
+      adapter.generateUploadUrl.mockResolvedValue(presigned);
 
       const result = await service.generateUploadUrl(
         {
@@ -244,13 +255,13 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       }
       expect(caught).toBeInstanceOf(BadRequestException);
       expect(extractErrorCode(caught)).toBe(ErrorCodes.FILE_001);
-      expect(storage.generateUploadUrl).not.toHaveBeenCalled();
+      expect(adapter.generateUploadUrl).not.toHaveBeenCalled();
     });
 
     it.each([['image/jpeg'], ['image/png'], ['application/pdf']])(
       'allows allowlist contentType "%s"',
       async (mime) => {
-        storage.generateUploadUrl.mockResolvedValue({
+        adapter.generateUploadUrl.mockResolvedValue({
           uploadUrl: 'u',
           objectKey: 'k',
         });
@@ -272,13 +283,14 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
     it('persists row when HEAD confirms object exists', async () => {
       const saved = await service.createDocument(dto, DRIVER);
 
-      expect(storage.objectExists).toHaveBeenCalledWith(dto.fileKey);
+      expect(adapter.objectExists).toHaveBeenCalledWith(dto.fileKey);
       expect(documentRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           ownerType: DocumentOwnerType.USER,
           ownerId: 'user-1',
           type: DocumentType.NIN,
           fileKey: dto.fileKey,
+          storageProviderId: 'provider-1',
           status: DocumentStatus.PENDING,
           uploadedBy: 'user-1',
           reviewedAt: null,
@@ -289,9 +301,9 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       expect(saved.id).toBe('doc-new');
     });
 
-    it('seeds fileUrl from storage.getCanonicalUri(objectKey)', async () => {
+    it('seeds fileUrl from adapter.canonicalUri(objectKey)', async () => {
       await service.createDocument(dto, DRIVER);
-      expect(storage.getCanonicalUri).toHaveBeenCalledWith(dto.fileKey);
+      expect(adapter.canonicalUri).toHaveBeenCalledWith(dto.fileKey);
       expect(documentRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           fileUrl: `https://nyc3.digitaloceanspaces.com/orbit-kyc-v1/${dto.fileKey}`,
@@ -317,7 +329,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
     });
 
     it('FILE_002 — HEAD returns false → 400 with errorCode FILE_002', async () => {
-      storage.objectExists.mockResolvedValue(false);
+      adapter.objectExists.mockResolvedValue(false);
 
       let caught: unknown;
       try {
@@ -340,14 +352,14 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       }
       expect(caught).toBeInstanceOf(BadRequestException);
       expect(extractErrorCode(caught)).toBe(ErrorCodes.FILE_002);
-      expect(storage.objectExists).not.toHaveBeenCalled();
+      expect(adapter.objectExists).not.toHaveBeenCalled();
     });
 
     it('rejects non-admin trying to persist for another user (403)', async () => {
       await expect(
         service.createDocument(dto, OTHER_DRIVER),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(storage.objectExists).not.toHaveBeenCalled();
+      expect(adapter.objectExists).not.toHaveBeenCalled();
     });
 
     it('admin can persist for any owner', async () => {
@@ -399,7 +411,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       }
       expect(caught).toBeInstanceOf(BadRequestException);
       expect(extractErrorCode(caught)).toBe(ErrorCodes.DOCUMENT_001);
-      expect(storage.objectExists).not.toHaveBeenCalled();
+      expect(adapter.objectExists).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -432,7 +444,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       }
       expect(caught).toBeInstanceOf(BadRequestException);
       expect(extractErrorCode(caught)).toBe(ErrorCodes.DOCUMENT_002);
-      expect(storage.objectExists).not.toHaveBeenCalled();
+      expect(adapter.objectExists).not.toHaveBeenCalled();
     });
 
     // C2 — multi-version doc history: re-upload doesn't touch the prior row
@@ -682,12 +694,12 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
   describe('generateViewUrl', () => {
     it('owner sees their own document view-url', async () => {
       documentRepo.findOne.mockResolvedValue(buildDocument({}));
-      storage.generateViewUrl.mockResolvedValue('https://signed.example/get');
+      adapter.generateViewUrl.mockResolvedValue('https://signed.example/get');
 
       const result = await service.generateViewUrl('doc-1', DRIVER);
 
       expect(result).toEqual({ viewUrl: 'https://signed.example/get' });
-      expect(storage.generateViewUrl).toHaveBeenCalledWith(
+      expect(adapter.generateViewUrl).toHaveBeenCalledWith(
         'user/user-1/drivers_license/abc.jpg',
       );
     });
@@ -696,7 +708,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       documentRepo.findOne.mockResolvedValue(
         buildDocument({ ownerId: 'someone-else' }),
       );
-      storage.generateViewUrl.mockResolvedValue('https://signed.example/get');
+      adapter.generateViewUrl.mockResolvedValue('https://signed.example/get');
 
       const result = await service.generateViewUrl('doc-1', ADMIN);
 
@@ -710,7 +722,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       await expect(
         service.generateViewUrl('doc-1', OTHER_DRIVER),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(storage.generateViewUrl).not.toHaveBeenCalled();
+      expect(adapter.generateViewUrl).not.toHaveBeenCalled();
     });
 
     it('404 when document does not exist', async () => {
