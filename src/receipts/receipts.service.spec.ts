@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ReceiptsService } from './receipts.service';
 import { Order, OrderStatus } from '../orders/entities/order.entity';
-import { SpacesStorageService } from '../documents/spaces-storage.service';
+import { StorageRegistry } from '../storage/storage-registry.service';
 import { EmailService } from '../notifications/email.service';
 import { SmsService } from '../notifications/sms.service';
 import { naira } from '../common/money';
@@ -42,6 +42,7 @@ describe('ReceiptsService (E4 — end-to-end dispatch)', () => {
   let service: ReceiptsService;
   let ordersRepo: { findOne: jest.Mock };
   let storage: { uploadBuffer: jest.Mock; generateViewUrl: jest.Mock };
+  let storageRegistry: { getActive: jest.Mock };
   let email: { sendEmail: jest.Mock };
   let sms: { sendSms: jest.Mock };
 
@@ -53,6 +54,12 @@ describe('ReceiptsService (E4 — end-to-end dispatch)', () => {
         .fn()
         .mockResolvedValue('https://signed.example.com/receipt.pdf'),
     };
+    // STG-1 — ReceiptsService now resolves an adapter via the registry.
+    // `getActive()` returns the (mocked) adapter exposing the two methods
+    // E4 actually touches: uploadBuffer + generateViewUrl.
+    storageRegistry = {
+      getActive: jest.fn().mockResolvedValue(storage),
+    };
     email = { sendEmail: jest.fn().mockResolvedValue({ success: true }) };
     sms = { sendSms: jest.fn().mockResolvedValue({ success: true }) };
 
@@ -60,7 +67,7 @@ describe('ReceiptsService (E4 — end-to-end dispatch)', () => {
       providers: [
         ReceiptsService,
         { provide: getRepositoryToken(Order), useValue: ordersRepo },
-        { provide: SpacesStorageService, useValue: storage },
+        { provide: StorageRegistry, useValue: storageRegistry },
         { provide: EmailService, useValue: email },
         { provide: SmsService, useValue: sms },
         {
