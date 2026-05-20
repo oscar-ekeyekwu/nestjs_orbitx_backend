@@ -205,7 +205,14 @@ audit row to `approval_decisions`. After that migration runs, the env
 vars are inert — subsequent credential changes happen via the admin UI
 shipped in STG-2.
 
-For a fresh staging deploy:
+`SPACES_KEY` and `SPACES_SECRET` are **optional**. A greenfield deploy
+with no legacy DigitalOcean credentials can leave them blank — the
+migration logs a hint and skips the seed. `documents.storageProviderId`
+stays nullable in that case; an admin creates the first provider via
+`/settings/storage` and any subsequent upload uses that row. Document
+writes attempted before a provider exists fail at the service layer.
+
+For a fresh staging deploy that DOES have legacy creds to migrate:
 
 ```bash
 export STORAGE_KEK="$(openssl rand -base64 32)"
@@ -216,6 +223,15 @@ export SPACES_KEY=...
 export SPACES_SECRET=...
 npm run migration:run
 # After this point, you can blank SPACES_KEY/SECRET — they're not read again.
+```
+
+For a greenfield deploy with no legacy creds:
+
+```bash
+export STORAGE_KEK="$(openssl rand -base64 32)"
+# Leave SPACES_KEY / SPACES_SECRET unset.
+npm run migration:run
+# Then in the admin UI: Settings → Storage Providers → Add provider.
 ```
 
 ### Adding a Supabase Storage provider (STG-3)
