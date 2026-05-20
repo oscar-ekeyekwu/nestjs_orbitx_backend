@@ -28,6 +28,7 @@ import { VehiclesModule } from './vehicles/vehicles.module';
 import { DocumentsModule } from './documents/documents.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { InvitesModule } from './invites/invites.module';
+import { StorageModule } from './storage/storage.module';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -88,6 +89,7 @@ import { InvitesModule } from './invites/invites.module';
     SupportModule,
     CompaniesModule,
     VehiclesModule,
+    StorageModule,
     DocumentsModule,
     ApprovalsModule,
     InvitesModule,
