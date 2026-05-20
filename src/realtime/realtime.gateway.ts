@@ -289,6 +289,19 @@ export class RealtimeGateway
   }
 
   /**
+   * J4 — count of connected sockets in the eligible room for a given
+   * package size. Used by `OrdersService.create` to stamp
+   * `orders.eligibleDriversAtBroadcast` for the order-matching report.
+   * Returns 0 if the server isn't initialised yet (CLI run / unit tests).
+   */
+  async countEligibleDrivers(packageSize: string): Promise<number> {
+    if (!this.server) return 0;
+    const room = RealtimeGateway.eligibleRoom(packageSize);
+    const sockets = await this.server.in(room).fetchSockets();
+    return sockets.length;
+  }
+
+  /**
    * ARCH-12 — fan out a freshly-created order to every driver in the
    * matching eligible room. Returns the room name for logging.
    */

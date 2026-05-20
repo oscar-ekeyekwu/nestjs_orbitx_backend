@@ -29,6 +29,15 @@ export class AdminController {
     return this.adminService.getTimeseries();
   }
 
+  @Get('metrics/order-matching')
+  @ApiOperation({
+    summary:
+      'J4 — last 7 days of order-matching metrics: time-to-first-accept (avg/p95), eligible pool size, winning driver distance, cherry-pick ratio.',
+  })
+  async getOrderMatchingMetrics() {
+    return this.adminService.getOrderMatchingMetrics();
+  }
+
   @Get('export/users')
   @ApiOperation({ summary: 'Export all users as CSV (Admin only)' })
   async exportUsers(@Res() res: Response) {
