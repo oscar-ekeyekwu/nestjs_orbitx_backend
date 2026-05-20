@@ -44,11 +44,29 @@ export class UsersService {
   }
 
   async findAll(queryDto: GetUsersQueryDto): Promise<PaginatedResult<User>> {
-    const { role, search } = queryDto;
+    const { role, search, accountType, verificationStatus, companyId } =
+      queryDto;
     const query = this.usersRepository.createQueryBuilder('user');
+
+    // H3 — left-join driver_profiles so the admin Drivers page can filter
+    // by accountType / verificationStatus / companyId. Implicitly forces
+    // role='driver' if any of those filters are set — otherwise the join
+    // would silently drop non-driver users when filtered.
+    const needsDriverJoin =
+      role === UserRole.DRIVER ||
+      !!accountType ||
+      !!verificationStatus ||
+      !!companyId;
+    if (needsDriverJoin) {
+      query.leftJoin('driver_profiles', 'dp', 'dp."userId" = user.id');
+    }
 
     if (role) {
       query.andWhere('user.role = :role', { role });
+    } else if (needsDriverJoin) {
+      query.andWhere('user.role = :driverRole', {
+        driverRole: UserRole.DRIVER,
+      });
     }
 
     if (search) {
@@ -56,6 +74,18 @@ export class UsersService {
         '(user.first_name ILIKE :search OR user.last_name ILIKE :search OR user.email ILIKE :search)',
         { search: `%${search}%` },
       );
+    }
+
+    if (accountType) {
+      query.andWhere('dp."accountType" = :accountType', { accountType });
+    }
+    if (verificationStatus) {
+      query.andWhere('dp."verificationStatus" = :verificationStatus', {
+        verificationStatus,
+      });
+    }
+    if (companyId) {
+      query.andWhere('dp."companyId" = :companyId', { companyId });
     }
 
     query
