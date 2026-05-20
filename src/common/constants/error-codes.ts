@@ -69,6 +69,12 @@ export const ErrorCodes = {
   // ARCH-5: caller is outside the configured Lagos service bbox.
   ZONE_001: 'OUTSIDE_SERVICE_ZONE',
 
+  // Geo / sanity errors (GEO_xxx)
+  // J2: lat/lng outside the Nigeria-wide bounding box. Wider than the
+  // Lagos zone (ZONE_001) — this catches GPS drift, fixture leakage,
+  // and obvious spoofing before any service-zone check runs.
+  GEO_001: 'INVALID_COORDINATES_OUT_OF_REGION',
+
   // Assignment errors (ASSIGNMENT_xxx)
   // B4: another active vehicle_assignments row already exists for the
   // (vehicle, driver) the caller is trying to assign. Surfaces the

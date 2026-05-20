@@ -17,6 +17,7 @@ import { Vehicle, VehicleStatus } from '../vehicles/entities/vehicle.entity';
 import { UsersService } from '../users/users.service';
 import { UserRole } from '../common/enums/user-role.enum';
 import { ErrorCodes } from '../common/constants/error-codes';
+import { SystemConfigService } from '../config/config.service';
 
 type RepoMock = {
   findOne: jest.Mock;
@@ -99,6 +100,21 @@ describe('DriversService', () => {
         {
           provide: EventEmitter2,
           useValue: { emit: jest.fn().mockReturnValue(true) },
+        },
+        // I5: SystemConfigService dep for the Lagos service-zone check
+        // at go-online time. Returns the default bbox so the unit tests
+        // that don't supply coords exercise the existing online-toggle
+        // paths without engaging the new geofence.
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue({
+              latMin: 6.35,
+              latMax: 6.7,
+              lngMin: 3.1,
+              lngMax: 3.55,
+            }),
+          },
         },
       ],
     }).compile();
