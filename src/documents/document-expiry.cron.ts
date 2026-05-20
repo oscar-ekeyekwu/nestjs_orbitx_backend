@@ -216,9 +216,14 @@ export class DocumentExpiryCron {
    */
   private async suspendOwner(doc: Document): Promise<boolean> {
     let success = false;
+    // I2 / I3 / I4 — the suspension audit reason names the triggering
+    // doc type explicitly so a compliance review of suspended owners
+    // can answer "which regulator's document lapsed?" without joining
+    // back to documents.
+    const reason = `Required document expired: ${doc.type}`;
     switch (doc.ownerType) {
       case DocumentOwnerType.USER:
-        success = await this.suspendDriverByUserId(doc.ownerId);
+        success = await this.suspendDriverByUserId(doc.ownerId, reason);
         break;
       case DocumentOwnerType.VEHICLE:
         success = await this.suspendVehicle(doc.ownerId);
@@ -239,7 +244,10 @@ export class DocumentExpiryCron {
     return success;
   }
 
-  private async suspendDriverByUserId(userId: string): Promise<boolean> {
+  private async suspendDriverByUserId(
+    userId: string,
+    reason?: string,
+  ): Promise<boolean> {
     const profile = await this.driverProfileRepo.findOne({
       where: { userId },
     });
@@ -258,7 +266,7 @@ export class DocumentExpiryCron {
     try {
       await this.driversService.transitionVerification(
         profile.id,
-        { status: DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED },
+        { status: DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED, reason },
         null,
       );
       return true;

@@ -7,12 +7,14 @@ import { VehicleAssignment } from '../vehicles/entities/vehicle-assignment.entit
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { UsersModule } from '../users/users.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { SystemConfigModule } from '../config/config.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DriverProfile, VehicleAssignment, Vehicle]),
     UsersModule,
     ApprovalsModule,
+    SystemConfigModule,
   ],
   controllers: [DriversController],
   providers: [DriversService],

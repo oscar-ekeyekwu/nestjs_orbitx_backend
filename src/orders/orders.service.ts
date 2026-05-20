@@ -23,6 +23,7 @@ import { UserRole } from '../common/enums/user-role.enum';
 import { WalletService } from '../wallet/wallet.service';
 import { SystemConfigService } from '../config/config.service';
 import { ConfigKey } from '../config/enums/config-keys.enum';
+import { assertInsideLagos, assertInsideNigeria } from '../common/geo';
 import {
   PaymentMethod,
   Transaction,
@@ -120,6 +121,29 @@ export class OrdersService {
     createOrderDto: CreateOrderDto,
     customerId: string,
   ): Promise<Order> {
+    // J2 — sanity-check pickup + dropoff against the Nigeria bbox first
+    // so we surface GEO_001 (out of region) before the narrower ZONE_001.
+    assertInsideNigeria(
+      createOrderDto.pickupLatitude,
+      createOrderDto.pickupLongitude,
+    );
+    assertInsideNigeria(
+      createOrderDto.deliveryLatitude,
+      createOrderDto.deliveryLongitude,
+    );
+
+    // I5 — both endpoints must fall inside the Lagos service zone.
+    await assertInsideLagos(
+      createOrderDto.pickupLatitude,
+      createOrderDto.pickupLongitude,
+      this.configService,
+    );
+    await assertInsideLagos(
+      createOrderDto.deliveryLatitude,
+      createOrderDto.deliveryLongitude,
+      this.configService,
+    );
+
     const estimatedPrice = await this.calculatePrice(
       createOrderDto.pickupLatitude,
       createOrderDto.pickupLongitude,
@@ -141,6 +165,19 @@ export class OrdersService {
           ? OrderPaymentStatus.PENDING_TRANSFER
           : OrderPaymentStatus.PENDING;
 
+    // J4 — sample the eligible-driver pool size at broadcast time so
+    // we can answer "was the room too thin?" when an order ages out.
+    // Best-effort: a query failure here must NOT block the order create.
+    let eligibleAtBroadcast: number | null = null;
+    try {
+      const eligible = await this.realtimeGateway.countEligibleDrivers(
+        createOrderDto.packageSize,
+      );
+      eligibleAtBroadcast = eligible;
+    } catch {
+      eligibleAtBroadcast = null;
+    }
+
     const order = this.ordersRepository.create({
       ...createOrderDto,
       customerId,
@@ -148,6 +185,7 @@ export class OrdersService {
       status: OrderStatus.PENDING,
       paymentMethod,
       paymentStatus,
+      eligibleDriversAtBroadcast: eligibleAtBroadcast,
     });
 
     const savedOrder = await this.ordersRepository.save(order);
@@ -330,6 +368,22 @@ export class OrdersService {
     // (the default) skips this entirely.
     await this.assertNoVehicleEditLock(driverId);
 
+    // J4 — fetch the driver's current location BEFORE the lock so the
+    // metric capture inside the transaction is non-blocking. Direct
+    // raw query avoids a DriversService → OrdersService circular dep.
+    type DriverGeoRow = {
+      currentLatitude: string | null;
+      currentLongitude: string | null;
+    };
+    const profileRows: DriverGeoRow[] = await this.dataSource.query(
+      `SELECT "currentLatitude", "currentLongitude"
+       FROM "driver_profiles"
+       WHERE "userId" = $1
+       LIMIT 1`,
+      [driverId],
+    );
+    const driverProfile: DriverGeoRow | null = profileRows[0] ?? null;
+
     // ARCH-12 — first-accept-wins via pessimistic_write on the order
     // row. Two concurrent acceptOrder calls serialize at the DB; the
     // second transaction's findOne sees status=ACCEPTED and throws
@@ -348,9 +402,31 @@ export class OrdersService {
           message: 'Order has already been accepted by another driver.',
         });
       }
+      const now = new Date();
       locked.driverId = driverId;
       locked.status = OrderStatus.ACCEPTED;
-      locked.acceptedAt = new Date();
+      locked.acceptedAt = now;
+
+      // J4 — record matching observability inline so the row is
+      // self-contained for the weekly admin metrics endpoint.
+      locked.timeToFirstAcceptMs =
+        now.getTime() - new Date(locked.createdAt).getTime();
+      if (
+        driverProfile?.currentLatitude !== null &&
+        driverProfile?.currentLatitude !== undefined &&
+        driverProfile.currentLongitude !== null &&
+        driverProfile.currentLongitude !== undefined
+      ) {
+        locked.winningDriverDistanceKm = Number(
+          haversineKm(
+            Number(driverProfile.currentLatitude),
+            Number(driverProfile.currentLongitude),
+            Number(locked.pickupLatitude),
+            Number(locked.pickupLongitude),
+          ).toFixed(3),
+        );
+      }
+
       await manager.save(locked);
       return manager.findOne(Order, {
         where: { id: orderId },

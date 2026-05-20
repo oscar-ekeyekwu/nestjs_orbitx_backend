@@ -39,6 +39,21 @@ export interface DashboardTimeseries {
   orders: TimeseriesPoint[];
 }
 
+// J4 — order-matching observability shape returned by
+// GET /admin/metrics/order-matching. Computed over the last 7 days of
+// orders that have an `acceptedAt` (i.e. the broadcast actually closed).
+export interface OrderMatchingMetrics {
+  windowDays: number;
+  totalOrdersAccepted: number;
+  averageTimeToFirstAcceptMs: number | null;
+  p95TimeToFirstAcceptMs: number | null;
+  averageEligibleDriversAtBroadcast: number | null;
+  averageWinningDriverDistanceKm: number | null;
+  // Fraction of recent orders unaccepted >2 min — the >10% threshold
+  // is the spec's nudge to consider directed-offer migration.
+  cherryPickRatio: number;
+}
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -287,6 +302,82 @@ export class AdminService {
     const row = await qb.getRawOne<{ total: string }>();
     return Number(row?.total ?? 0);
   }
+
+  /**
+   * J4 — last 7 days of order-matching metrics. Operationally this
+   * answers "are drivers cherry-picking?" and "is the eligible pool
+   * deep enough?" without joining a metrics warehouse.
+   */
+  async getOrderMatchingMetrics(): Promise<OrderMatchingMetrics> {
+    const windowDays = 7;
+    const since = addDays(startOfDay(new Date()), -windowDays);
+    const rows = await this.orderRepo
+      .createQueryBuilder('o')
+      .select([
+        'o."timeToFirstAcceptMs" AS "timeToFirstAcceptMs"',
+        'o."eligibleDriversAtBroadcast" AS "eligibleDriversAtBroadcast"',
+        'o."winningDriverDistanceKm" AS "winningDriverDistanceKm"',
+        'o.createdAt AS "createdAt"',
+        'o.acceptedAt AS "acceptedAt"',
+      ])
+      .where('o.createdAt >= :since', { since })
+      .getRawMany<{
+        timeToFirstAcceptMs: number | null;
+        eligibleDriversAtBroadcast: number | null;
+        winningDriverDistanceKm: string | null;
+        createdAt: Date;
+        acceptedAt: Date | null;
+      }>();
+
+    const acceptedMs = rows
+      .map((r) => r.timeToFirstAcceptMs)
+      .filter((v): v is number => typeof v === 'number');
+    const eligible = rows
+      .map((r) => r.eligibleDriversAtBroadcast)
+      .filter((v): v is number => typeof v === 'number');
+    const distances = rows
+      .map((r) =>
+        r.winningDriverDistanceKm !== null
+          ? Number(r.winningDriverDistanceKm)
+          : null,
+      )
+      .filter((v): v is number => typeof v === 'number' && !Number.isNaN(v));
+
+    const cherryPicked = rows.filter((r) => {
+      if (!r.acceptedAt) return true;
+      const elapsed =
+        new Date(r.acceptedAt).getTime() - new Date(r.createdAt).getTime();
+      return elapsed > 2 * 60 * 1000;
+    }).length;
+
+    const totalOrdersAccepted = rows.filter((r) => !!r.acceptedAt).length;
+    return {
+      windowDays,
+      totalOrdersAccepted,
+      averageTimeToFirstAcceptMs:
+        acceptedMs.length === 0 ? null : average(acceptedMs),
+      p95TimeToFirstAcceptMs:
+        acceptedMs.length === 0 ? null : percentile(acceptedMs, 0.95),
+      averageEligibleDriversAtBroadcast:
+        eligible.length === 0 ? null : average(eligible),
+      averageWinningDriverDistanceKm:
+        distances.length === 0 ? null : Number(average(distances).toFixed(3)),
+      cherryPickRatio:
+        rows.length === 0 ? 0 : Number((cherryPicked / rows.length).toFixed(3)),
+    };
+  }
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+  return sorted[idx];
 }
 
 function startOfDay(d: Date): Date {

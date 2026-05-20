@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order } from '../orders/entities/order.entity';
-import { SpacesStorageService } from '../documents/spaces-storage.service';
+import { StorageRegistry } from '../storage/storage-registry.service';
 import { EmailService } from '../notifications/email.service';
 import { SmsService } from '../notifications/sms.service';
 import { renderReceipt, type ReceiptInput } from './receipt-renderer';
@@ -38,7 +38,7 @@ export class ReceiptsService {
   constructor(
     @InjectRepository(Order)
     private readonly ordersRepo: Repository<Order>,
-    private readonly storage: SpacesStorageService,
+    private readonly storage: StorageRegistry,
     // forwardRef on the provider injections to mirror the module-level
     // forwardRef on NotificationsModule (see receipts.module.ts comment).
     @Inject(forwardRef(() => EmailService))
@@ -60,9 +60,15 @@ export class ReceiptsService {
     const input = this.buildReceiptInput(order);
     const pdf = await renderReceipt(input);
     const objectKey = `receipts/${order.id}.pdf`;
-    await this.storage.uploadBuffer(objectKey, pdf, RECEIPT_CONTENT_TYPE);
+    // E4 receipts land in the currently active provider's bucket under
+    // the `receipts/` prefix. They are not first-class `Document` rows,
+    // so they don't get tracked in the migration table — STG-4 migrates
+    // KYC docs only. A future story can extend that if receipts need
+    // to follow the same bucket.
+    const adapter = await this.storage.getActive();
+    await adapter.uploadBuffer(objectKey, pdf, RECEIPT_CONTENT_TYPE);
 
-    const receiptUrl = await this.storage.generateViewUrl(
+    const receiptUrl = await adapter.generateViewUrl(
       objectKey,
       RECEIPT_VIEW_URL_TTL_SECONDS,
     );

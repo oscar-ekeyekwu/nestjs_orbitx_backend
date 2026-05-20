@@ -171,4 +171,23 @@ export class Order {
 
   @Column('decimal', { precision: 10, scale: 7, nullable: true })
   driverLongitude: number;
+
+  // J4 — order-match observability. Stamped at broadcast + accept so the
+  // weekly admin report can show median time-to-first-accept, eligible
+  // pool sizes at broadcast, and the winning driver's distance — the
+  // signals that tell us whether to graduate to a directed-offer match.
+  @Column({ type: 'integer', nullable: true })
+  eligibleDriversAtBroadcast: number | null;
+
+  @Column({ type: 'integer', nullable: true })
+  timeToFirstAcceptMs: number | null;
+
+  @Column('decimal', { precision: 10, scale: 3, nullable: true })
+  winningDriverDistanceKm: number | null;
+
+  // I6 — sticky flag turned on by an SOS event. The customer-facing
+  // tracking screen renders a non-alarming "team is monitoring" banner
+  // while this is true; the admin closes the incident which clears it.
+  @Column({ type: 'boolean', default: false })
+  incidentFlagged: boolean;
 }

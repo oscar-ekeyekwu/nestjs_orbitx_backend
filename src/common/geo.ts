@@ -86,3 +86,54 @@ export async function assertInsideLagos(
 function deg2rad(deg: number): number {
   return deg * (Math.PI / 180);
 }
+
+// J2 — sanity bbox around Nigeria. Anything outside this is GPS drift,
+// fixture leakage, or spoofing. Coarse on purpose; the Lagos service
+// zone (ZONE_001) is the tight narrow filter on top.
+export const NIGERIA_BBOX: LagosBbox = {
+  latMin: 4.0,
+  latMax: 14.0,
+  lngMin: 2.5,
+  lngMax: 15.0,
+};
+
+export function isInsideNigeria(lat: number, lng: number): boolean {
+  return (
+    lat >= NIGERIA_BBOX.latMin &&
+    lat <= NIGERIA_BBOX.latMax &&
+    lng >= NIGERIA_BBOX.lngMin &&
+    lng <= NIGERIA_BBOX.lngMax
+  );
+}
+
+/**
+ * J2 — coarse-region check used at every coordinate ingress point
+ * (driver location updates, order create pickup/dropoff). Surfaces as
+ * `GEO_001` so the client can distinguish "you are out of Nigeria
+ * entirely" from "you are out of the Lagos service zone" (ZONE_001).
+ */
+export function assertInsideNigeria(lat: number, lng: number): void {
+  if (!isInsideNigeria(lat, lng)) {
+    throw new BadRequestException({
+      errorCode: ErrorCodes.GEO_001,
+      message:
+        'Coordinates fall outside our operating region. Verify GPS is on and accurate.',
+    });
+  }
+}
+
+// J2 — NFR-P3 location-accuracy gate. Updates with `accuracy > 50m` are
+// dropped silently (no DB write, no broadcast). Callers count dropped
+// updates in a monitoring counter (logger.warn for v1).
+export const MAX_LOCATION_ACCURACY_METERS = 50;
+
+export function isAcceptableLocationAccuracy(
+  accuracyMeters: number | null | undefined,
+): boolean {
+  if (accuracyMeters === null || accuracyMeters === undefined) {
+    // No accuracy reading at all → accept. Older client builds
+    // don't pass accuracy and we don't want to gate them out.
+    return true;
+  }
+  return accuracyMeters <= MAX_LOCATION_ACCURACY_METERS;
+}

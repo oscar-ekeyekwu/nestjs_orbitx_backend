@@ -24,6 +24,12 @@ import { UsersService } from '../users/users.service';
 import { Naira, naira } from '../common/money';
 import { ErrorCodes } from '../common/constants/error-codes';
 import {
+  assertInsideLagos,
+  assertInsideNigeria,
+  isAcceptableLocationAccuracy,
+} from '../common/geo';
+import { SystemConfigService } from '../config/config.service';
+import {
   ApprovalAction,
   ApprovalTargetType,
 } from '../approvals/entities/approval-decision.entity';
@@ -89,6 +95,7 @@ export class DriversService {
     private readonly approvalsService: ApprovalsService,
     private readonly events: EventEmitter2,
     private readonly moduleRef: ModuleRef,
+    private readonly systemConfig: SystemConfigService,
   ) {}
 
   /**
@@ -260,6 +267,7 @@ export class DriversService {
   async updateOnlineStatus(
     userId: string,
     isOnline: boolean,
+    location?: { latitude: number; longitude: number },
   ): Promise<DriverProfile> {
     let profile = await this.findByUserId(userId);
 
@@ -276,6 +284,32 @@ export class DriversService {
         throw new NotFoundException('Driver profile not found');
       }
       profile = await this.createProfile(userId);
+    }
+
+    // I5 + J2 — when the client supplies a location (or the profile
+    // has stored coords from a prior /drivers/location update),
+    // assert it falls inside the Nigeria sanity bbox (J2) AND inside
+    // the configured Lagos service zone (I5). Pre-v1 mobile clients
+    // that don't send coords on the go-online call skip the gate
+    // here — they'll get caught at the first location-update tick.
+    // Going offline never needs coordinates; drivers must always be
+    // able to drop out.
+    if (isOnline) {
+      const lat = location?.latitude ?? profile.currentLatitude;
+      const lng = location?.longitude ?? profile.currentLongitude;
+      if (
+        lat !== null &&
+        lng !== null &&
+        lat !== undefined &&
+        lng !== undefined
+      ) {
+        assertInsideNigeria(lat, lng);
+        await assertInsideLagos(lat, lng, this.systemConfig);
+      }
+      if (location) {
+        profile.currentLatitude = location.latitude;
+        profile.currentLongitude = location.longitude;
+      }
     }
 
     // B5: going online requires an active assignment to an APPROVED
@@ -408,9 +442,22 @@ export class DriversService {
     userId: string,
     latitude: number,
     longitude: number,
-  ): Promise<DriverProfile> {
-    const profile = await this.findByUserId(userId);
+    accuracyMeters?: number | null,
+  ): Promise<DriverProfile | null> {
+    // J2 — sanity bbox: a reading from outside Nigeria is GPS drift,
+    // a fixture leak, or spoofing. Reject with GEO_001 so the client
+    // can show a meaningful error instead of silently writing trash.
+    assertInsideNigeria(latitude, longitude);
 
+    // J2 / NFR-P3 — accuracy gate. Updates worse than 50m are dropped
+    // silently to keep the customer socket clean. We return null so
+    // the caller knows nothing was written; the public controller maps
+    // null → 204 (no content).
+    if (!isAcceptableLocationAccuracy(accuracyMeters)) {
+      return null;
+    }
+
+    const profile = await this.findByUserId(userId);
     if (!profile) {
       throw new NotFoundException('Driver profile not found');
     }

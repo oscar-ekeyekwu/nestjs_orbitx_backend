@@ -38,7 +38,7 @@ describe('OrdersService.acceptOrder (ARCH-12 first-accept lock)', () => {
     emitOrderStatusUpdate: jest.Mock;
   };
   let notifications: { notifyOrderAccepted: jest.Mock };
-  let dataSource: { transaction: jest.Mock };
+  let dataSource: { transaction: jest.Mock; query: jest.Mock };
   let service: OrdersService;
 
   // Shared mutable order row simulates a single DB row. Both txns
@@ -71,6 +71,11 @@ describe('OrdersService.acceptOrder (ARCH-12 first-accept lock)', () => {
     // sharedOrder object. The second caller observes the first
     // caller's mutation when it tries to findOne.
     dataSource = {
+      // J4 — acceptOrder now does a raw query for the driver's geo
+      // before opening the lock. Default to "no profile row" so the
+      // accept path still works; tests that care about the metric
+      // override this.
+      query: jest.fn().mockResolvedValue([]),
       transaction: jest.fn((cb: (m: unknown) => unknown): Promise<unknown> => {
         const manager = {
           findOne: jest

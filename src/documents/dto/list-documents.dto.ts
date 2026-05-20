@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import {
   DocumentOwnerType,
   DocumentStatus,
@@ -34,4 +35,15 @@ export class ListDocumentsDto {
   @IsOptional()
   @IsEnum(DocumentStatus)
   status?: DocumentStatus;
+
+  // H5 — narrows to documents whose expiryDate is in the next N days
+  // (inclusive of expired-but-within-window). Admin-only filter; ignored
+  // for non-admin callers per existing service-side scoping.
+  @ApiPropertyOptional({ example: 30, minimum: 0, maximum: 365 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  expiringInDays?: number;
 }

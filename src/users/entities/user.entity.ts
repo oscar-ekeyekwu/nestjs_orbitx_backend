@@ -65,6 +65,16 @@ export class User {
   @Column({ type: 'varchar', length: 64, nullable: true })
   paystackRecipientCode: string | null;
 
+  // I1 — NDPA data-subject-rights columns.
+  @Column({ type: 'timestamp with time zone', nullable: true })
+  consentedAt: Date | null;
+
+  @Column({ type: 'timestamp with time zone', nullable: true })
+  deletionScheduledAt: Date | null;
+
+  @Column({ type: 'timestamp with time zone', nullable: true })
+  pseudonymizedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

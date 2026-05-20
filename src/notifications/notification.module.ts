@@ -12,14 +12,28 @@ import { EmailService } from './email.service';
 import { Notification } from './entities/notification.entity';
 import { NotificationTemplate } from './entities/notification-template.entity';
 import { DeviceToken } from './entities/device-token.entity';
+import { DeviceTokensService } from './device-tokens.service';
+import { DeviceTokensController } from './device-tokens.controller';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { User } from '../users/entities/user.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Notification, NotificationTemplate, DeviceToken]),
+    TypeOrmModule.forFeature([
+      Notification,
+      NotificationTemplate,
+      DeviceToken,
+      // I6 — incident push subscribers fan out incident.raised to all
+      // active admin users.
+      User,
+    ]),
     RealtimeModule,
   ],
-  controllers: [NotificationsController, NotificationTemplateAdminController],
+  controllers: [
+    NotificationsController,
+    NotificationTemplateAdminController,
+    DeviceTokensController,
+  ],
   providers: [
     NotificationsService,
     NotificationTemplateService,
@@ -28,6 +42,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     EmailService,
     PushFanoutService,
     PushFanoutEventSubscribers,
+    DeviceTokensService,
   ],
   exports: [
     NotificationsService,

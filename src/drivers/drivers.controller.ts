@@ -76,8 +76,17 @@ export class DriversController {
   }
 
   @Post('online')
-  toggleOnline(@CurrentUser() user: User, @Body('isOnline') isOnline: boolean) {
-    return this.driversService.updateOnlineStatus(user.id, isOnline);
+  toggleOnline(
+    @CurrentUser() user: User,
+    @Body('isOnline') isOnline: boolean,
+    @Body('latitude') latitude?: number,
+    @Body('longitude') longitude?: number,
+  ) {
+    const location =
+      typeof latitude === 'number' && typeof longitude === 'number'
+        ? { latitude, longitude }
+        : undefined;
+    return this.driversService.updateOnlineStatus(user.id, isOnline, location);
   }
 
   @Patch('location')
@@ -85,7 +94,13 @@ export class DriversController {
     @CurrentUser() user: User,
     @Body('latitude') latitude: number,
     @Body('longitude') longitude: number,
+    @Body('accuracy') accuracy?: number | null,
   ) {
-    return this.driversService.updateLocation(user.id, latitude, longitude);
+    return this.driversService.updateLocation(
+      user.id,
+      latitude,
+      longitude,
+      accuracy,
+    );
   }
 }

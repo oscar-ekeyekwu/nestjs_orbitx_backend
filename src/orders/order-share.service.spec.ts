@@ -146,10 +146,18 @@ describe('OrderShareService (E3)', () => {
       });
       // Negative assertions — make sure none of these leak through if the
       // shape ever drifts.
-      expect((out as Record<string, unknown>).customerId).toBeUndefined();
-      expect((out as Record<string, unknown>).recipientPhone).toBeUndefined();
-      expect((out as Record<string, unknown>).pickupAddress).toBeUndefined();
-      expect((out as Record<string, unknown>).driverPhone).toBeUndefined();
+      expect(
+        (out as unknown as Record<string, unknown>).customerId,
+      ).toBeUndefined();
+      expect(
+        (out as unknown as Record<string, unknown>).recipientPhone,
+      ).toBeUndefined();
+      expect(
+        (out as unknown as Record<string, unknown>).pickupAddress,
+      ).toBeUndefined();
+      expect(
+        (out as unknown as Record<string, unknown>).driverPhone,
+      ).toBeUndefined();
     });
 
     it('includes ETA when driver location is available', async () => {

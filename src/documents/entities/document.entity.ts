@@ -74,6 +74,14 @@ export class Document {
   @Column({ type: 'varchar', nullable: true })
   fileKey: string | null;
 
+  // STG-1 — which storage provider this document physically lives in.
+  // FK to storage_providers.id. Nullable in the schema only during the
+  // bootstrap-migration transition window; backfill within the same
+  // migration tightens it to NOT NULL before the app starts serving.
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  storageProviderId: string | null;
+
   @Column({ type: 'date', nullable: true })
   expiryDate: Date | null;
 

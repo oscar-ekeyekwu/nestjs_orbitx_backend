@@ -15,6 +15,11 @@ export enum ApprovalTargetType {
   VEHICLE = 'vehicle',
   DOCUMENT = 'document',
   ORDER = 'order',
+  // STG-1 — audit row for credential / activation events on the
+  // storage_providers table.
+  STORAGE_PROVIDER = 'storage_provider',
+  // STG-4 — audit row for cross-provider document migration jobs.
+  STORAGE_MIGRATION = 'storage_migration',
 }
 
 export enum ApprovalAction {
@@ -22,6 +27,19 @@ export enum ApprovalAction {
   REJECT = 'reject',
   SUSPEND = 'suspend',
   RESUME = 'resume',
+  // STG-1 — recorded when the bootstrap migration seeds a
+  // storage_providers row from the legacy SPACES_* env vars.
+  BOOTSTRAP_SEED = 'bootstrap_seed',
+  // STG-2 — admin-driven storage_providers events. The table doubles as
+  // the platform's "admin state-change ledger" beyond just approvals;
+  // the target_type discriminates which kind of action this is.
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  ACTIVATE = 'activate',
+  // STG-4 — migration-job lifecycle. RESUME is reused from the existing
+  // value set (originally for driver-suspension recovery).
+  PAUSE = 'pause',
 }
 
 /**

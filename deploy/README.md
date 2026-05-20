@@ -164,6 +164,101 @@ back UPDATE/DELETE. Instead fix the caller — the audit ledger is meant
 to be append-only and the platform's NDPA / DR-A1 / DR-A2 commitments
 depend on it.
 
+## Storage provider credentials (STG-1)
+
+Document storage (KYC docs + E4 receipts) goes through a
+`storage_providers` table; the row's `secretCipher / secretNonce /
+secretTag` columns hold the secret access key encrypted with AES-256-GCM.
+The encryption key (KEK) is loaded once at boot from the `STORAGE_KEK`
+env var.
+
+```bash
+# Generate a KEK (32 raw bytes, base64-encoded)
+openssl rand -base64 32
+```
+
+Set the result as `STORAGE_KEK` in your environment / secret store. The
+app **refuses to start** if it's unset or decodes to anything other than
+32 bytes — fail-fast is the safest posture for a master key.
+
+### Threat model
+
+- **Lose the KEK** → admins must re-enter every storage provider's secret
+  access key via the STG-2 admin UI. The KYC bucket contents are intact;
+  only the credentials needed to *talk* to the bucket are gone. Plan for
+  this: keep the KEK in your password manager AND your CI secret store.
+- **Leak the KEK + DB access** → an attacker can decrypt every stored
+  credential. Treat the KEK like a CI deploy key.
+- **Rotation**: out of scope for STG-1. The `keyVersion` column on
+  `storage_providers` lets a future migration decrypt-with-old +
+  re-encrypt-with-new without dropping rows. KMS / Vault integration is
+  the production-grade path.
+
+### Bootstrap from SPACES_*
+
+The STG-1 bootstrap migration (`1780876900000-SeedStorageProviderFromEnv`)
+reads `SPACES_ENDPOINT / SPACES_REGION / SPACES_BUCKET / SPACES_KEY /
+SPACES_SECRET` exactly once, seeds a `storage_providers` row, points
+`system_configs['storage.activeProviderId']` at it, backfills every
+existing `documents.storage_provider_id`, and writes a `bootstrap_seed`
+audit row to `approval_decisions`. After that migration runs, the env
+vars are inert — subsequent credential changes happen via the admin UI
+shipped in STG-2.
+
+For a fresh staging deploy:
+
+```bash
+export STORAGE_KEK="$(openssl rand -base64 32)"
+export SPACES_ENDPOINT=https://nyc3.digitaloceanspaces.com
+export SPACES_REGION=nyc3
+export SPACES_BUCKET=orbit-kyc-v1
+export SPACES_KEY=...
+export SPACES_SECRET=...
+npm run migration:run
+# After this point, you can blank SPACES_KEY/SECRET — they're not read again.
+```
+
+### Adding a Supabase Storage provider (STG-3)
+
+Supabase Storage speaks the S3 wire protocol, so no separate adapter is
+needed — the same `S3CompatibleAdapter` covers it. To onboard a Supabase
+bucket through the admin UI (`/settings/storage` → **Add provider**), use:
+
+| Field            | Value                                                          |
+|------------------|----------------------------------------------------------------|
+| Slug             | `supabase-<region>` (e.g. `supabase-eu-central`)               |
+| Display name     | `Supabase Storage (<Region>)`                                  |
+| Endpoint         | `https://<project-ref>.supabase.co/storage/v1/s3`              |
+| Region           | The Supabase project region (e.g. `eu-central-1`, `us-east-1`) |
+| Bucket           | The Supabase Storage bucket name (e.g. `kyc-v1`)               |
+| Access key ID    | From **Supabase dashboard → Project Settings → Storage → S3 Access Keys** |
+| Secret access key | Same place. Never logged or persisted in plaintext.           |
+
+Look up the project ref in the Supabase dashboard URL
+(`https://supabase.com/dashboard/project/<project-ref>/...`). Both keys
+are generated in **Project Settings → Storage → S3 Access Keys → New
+access key** — they're separate from your service-role API key.
+
+### Manual smoke checklist when switching providers
+
+After onboarding a new provider, run through this list before flipping
+the Active radio:
+
+- [ ] Admin UI → **Test** button returns ok with a sub-second latency.
+- [ ] Hit **Activate** and confirm the success message names the new
+      provider.
+- [ ] Open the mobile app, upload one KYC document end-to-end. Confirm
+      the document row's `storageProviderId` in the database matches
+      the new provider id.
+- [ ] Open the admin Approvals tab, click the freshly-uploaded
+      document, confirm the presigned GET URL resolves and shows the
+      file in a new tab.
+- [ ] Open an *existing* document that was uploaded before the swap;
+      confirm its view URL still resolves (it should — view URLs route
+      via the document's own `storageProviderId`, not the active one).
+- [ ] Tail the backend logs for `StorageProvidersService` —
+      `Activated storage provider <slug>` should be the only new entry.
+
 ## Other deploy concerns
 
 - `nginx/` — reverse-proxy + TLS termination config (placeholder; fill in

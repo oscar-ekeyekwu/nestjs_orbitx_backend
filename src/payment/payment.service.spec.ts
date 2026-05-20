@@ -88,6 +88,10 @@ describe('PaymentService (ARCH-13)', () => {
         authorizationUrl: 'https://paystack.test/checkout/AC-1',
       }),
       verifyPayment: jest.fn(),
+      // G4 — added to IPaymentGateway after the spec file was written;
+      // tests don't exercise the transfer path but the type needs the
+      // method to be present.
+      createTransfer: jest.fn(),
       verifyWebhookSignature: jest.fn(),
       parseWebhookEvent: jest.fn(),
     };

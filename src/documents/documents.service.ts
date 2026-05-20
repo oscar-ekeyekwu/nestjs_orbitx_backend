@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, LessThanOrEqual, Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Document,
@@ -13,10 +13,8 @@ import {
   DocumentStatus,
   DocumentType,
 } from './entities/document.entity';
-import {
-  SpacesStorageService,
-  type PresignedUpload,
-} from './spaces-storage.service';
+import { StorageRegistry } from '../storage/storage-registry.service';
+import type { PresignedUpload } from '../storage/storage-adapter.interface';
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { ListDocumentsDto } from './dto/list-documents.dto';
@@ -42,7 +40,7 @@ export class DocumentsService {
   constructor(
     @InjectRepository(Document)
     private readonly documentRepo: Repository<Document>,
-    private readonly storage: SpacesStorageService,
+    private readonly storageRegistry: StorageRegistry,
     private readonly dataSource: DataSource,
     private readonly expiryCron: DocumentExpiryCron,
     private readonly approvalsService: ApprovalsService,
@@ -63,7 +61,8 @@ export class DocumentsService {
     if (caller.role !== UserRole.ADMIN) {
       this.assertOwnerMatchesCaller(dto.ownerType, dto.ownerId, caller);
     }
-    return this.storage.generateUploadUrl(dto);
+    const adapter = await this.storageRegistry.getActive();
+    return adapter.generateUploadUrl(dto);
   }
 
   /**
@@ -101,7 +100,11 @@ export class DocumentsService {
 
     await this.assertOwnerExists(dto.ownerType, dto.ownerId);
 
-    const exists = await this.storage.objectExists(dto.fileKey);
+    // STG-1 — the active provider at create time owns the document for
+    // its entire lifetime; the doc's `storageProviderId` is what later
+    // view-url lookups read, NOT the active provider (which may swap).
+    const adapter = await this.storageRegistry.getActive();
+    const exists = await adapter.objectExists(dto.fileKey);
     if (!exists) {
       throw new BadRequestException({
         message:
@@ -115,7 +118,8 @@ export class DocumentsService {
       ownerId: dto.ownerId,
       type: dto.docType,
       fileKey: dto.fileKey,
-      fileUrl: this.storage.getCanonicalUri(dto.fileKey),
+      fileUrl: adapter.canonicalUri(dto.fileKey),
+      storageProviderId: adapter.providerId,
       expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
       status: DocumentStatus.PENDING,
       uploadedBy: caller.id,
@@ -153,6 +157,19 @@ export class DocumentsService {
 
     if (filters.type) where.type = filters.type;
     if (filters.status) where.status = filters.status;
+
+    // H5 — admin-only `expiringInDays` window. Includes already-expired
+    // docs (expiryDate <= now+windowMs) so an admin can still spot a
+    // recently-expired cert that hasn't been renewed yet. Documents
+    // with NULL expiry are NOT matched (the filter is opt-in narrow).
+    if (
+      caller.role === UserRole.ADMIN &&
+      typeof filters.expiringInDays === 'number'
+    ) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() + filters.expiringInDays);
+      where.expiryDate = LessThanOrEqual(cutoff);
+    }
 
     return this.documentRepo.find({
       where,
@@ -299,7 +316,17 @@ export class DocumentsService {
       // pre-C1 placeholder). Nothing to view.
       throw new NotFoundException(`Document ${documentId} has no stored file`);
     }
-    const viewUrl = await this.storage.generateViewUrl(doc.fileKey);
+    if (!doc.storageProviderId) {
+      // Transitional safety net for the bootstrap window — after STG-1
+      // migrations run, every document has a storageProviderId. If a
+      // row makes it past the NOT NULL constraint, refuse to silently
+      // route it to the active provider.
+      throw new NotFoundException(
+        `Document ${documentId} has no recorded storage provider`,
+      );
+    }
+    const adapter = await this.storageRegistry.get(doc.storageProviderId);
+    const viewUrl = await adapter.generateViewUrl(doc.fileKey);
     return { viewUrl };
   }
 
