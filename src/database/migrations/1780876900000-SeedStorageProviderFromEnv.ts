@@ -4,18 +4,23 @@ import { encryptSecret, loadStorageKek } from '../../storage/crypto.util';
 /**
  * STG-1 — bootstrap seed.
  *
- * Reads the legacy `SPACES_*` env vars, encrypts the secret access key
- * with the `STORAGE_KEK` KEK, inserts a single row into `storage_providers`,
+ * When `SPACES_KEY + SPACES_SECRET` are set, encrypts the secret with
+ * the `STORAGE_KEK` KEK, inserts a single row into `storage_providers`,
  * points `system_configs['storage.activeProviderId']` at it, backfills
  * every existing `documents.storage_provider_id`, NOT-NULLs the column,
- * and writes a `bootstrap_seed` audit row. All inside one transaction.
+ * and writes a `bootstrap_seed` audit row.
+ *
+ * When `SPACES_KEY + SPACES_SECRET` are NOT set (greenfield deploy
+ * with no legacy DigitalOcean credentials), the migration logs a
+ * one-line hint and returns. `storage_providers` stays empty and
+ * `documents.storageProviderId` stays nullable until an admin creates
+ * the first provider through the STG-2 admin UI — at which point
+ * uploads start working. Document writes attempted before that point
+ * fail at the service layer (StorageRegistry.getActive throws), not
+ * here.
  *
  * Idempotent — re-running the migration is a no-op if a row already
  * exists (which it will, post-first-run).
- *
- * After this migration runs, `SPACES_*` env vars are no longer read by
- * any code path outside the migration itself. The `storage_providers`
- * row is the source of truth.
  */
 export class SeedStorageProviderFromEnv1780876900000
   implements MigrationInterface
@@ -41,9 +46,17 @@ export class SeedStorageProviderFromEnv1780876900000
     const secretAccessKey = process.env.SPACES_SECRET ?? '';
 
     if (!accessKeyId || !secretAccessKey) {
-      throw new Error(
-        'STG-1 bootstrap seed requires SPACES_KEY + SPACES_SECRET to be set so the existing DigitalOcean credentials can be migrated into storage_providers. Set them in your environment (or in CI secrets) before running migrations. After this migration runs once, the env vars are no longer consulted.',
+      // Greenfield deploy — no legacy SPACES_* creds to migrate. Leave
+      // the table empty and the documents column nullable; an admin
+      // creates the first provider via /settings/storage. Surface the
+      // state so the next operator isn't guessing.
+      // eslint-disable-next-line no-console
+      console.log(
+        '[STG-1] SPACES_KEY/SPACES_SECRET not set — skipping bootstrap seed. ' +
+          'Create the first storage provider via the admin UI (/settings/storage) ' +
+          'before any KYC document upload is attempted.',
       );
+      return;
     }
 
     const kek = loadStorageKek();
