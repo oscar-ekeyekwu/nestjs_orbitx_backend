@@ -3,14 +3,27 @@ import eslint from '@eslint/js';
 import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+import orbitPlugin from './eslint-rules/index.js';
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs'],
+    ignores: ['eslint.config.mjs', 'eslint-rules/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   eslintPluginPrettierRecommended,
+  {
+    plugins: {
+      orbit: orbitPlugin,
+    },
+    rules: {
+      // I7 — block new throw sites that interpolate PII identifiers
+      // (phone, email, NIN, etc.) into client-facing error messages.
+      // ARCH-6 runtime sanitiser is the backstop; this rule shifts
+      // the catch left so NFR-S3 holds as the codebase grows.
+      'orbit/no-pii-in-error': 'error',
+    },
+  },
   {
     languageOptions: {
       globals: {

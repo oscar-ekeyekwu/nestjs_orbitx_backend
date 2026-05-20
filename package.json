@@ -13,6 +13,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint:rules": "node eslint-rules/no-pii-in-error.test.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -131,6 +132,14 @@
       "html",
       "lcov"
     ],
+    "coverageThreshold": {
+      "global": {
+        "lines": 60,
+        "statements": 60,
+        "branches": 45,
+        "functions": 55
+      }
+    },
     "testEnvironment": "node"
   }
 }
