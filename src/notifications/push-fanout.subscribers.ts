@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { PushFanoutService } from './push-fanout.service';
 import type {
   ExpiredEvent,
@@ -7,6 +9,24 @@ import type {
   OwnerSuspendedEvent,
 } from '../documents/document-expiry.cron';
 import { DocumentOwnerType } from '../documents/entities/document.entity';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '../common/enums/user-role.enum';
+
+// I6 — payload shape published by IncidentsService.
+export interface IncidentRaisedEvent {
+  incidentId: string;
+  orderId: string;
+  driverId: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}
+
+export interface IncidentAcknowledgedEvent {
+  incidentId: string;
+  orderId: string;
+  driverId: string;
+  timeToAcknowledgeMs: number;
+}
 
 /**
  * C5 / D4 — review-decision events emitted post-commit by services
@@ -38,7 +58,11 @@ export interface ReviewEvent {
 export class PushFanoutEventSubscribers {
   private readonly logger = new Logger(PushFanoutEventSubscribers.name);
 
-  constructor(private readonly fanout: PushFanoutService) {}
+  constructor(
+    private readonly fanout: PushFanoutService,
+    @InjectRepository(User)
+    private readonly users: Repository<User>,
+  ) {}
 
   // ────────────────────────────────── C4 expiry cron events
   @OnEvent('document.expiring_soon')
@@ -138,6 +162,61 @@ export class PushFanoutEventSubscribers {
           'Your driver verification was rejected. Re-submit with the requested updates.',
       },
       data: { kind: 'driver.rejected' },
+    });
+  }
+
+  // ────────────────────────────────── I6 SOS events
+  @OnEvent('incident.raised')
+  async onIncidentRaised(event: IncidentRaisedEvent): Promise<void> {
+    const admins = await this.users.find({
+      where: { role: UserRole.ADMIN, isActive: true },
+      select: ['id'],
+    });
+    if (admins.length === 0) {
+      this.logger.warn(
+        `incident.raised ${event.incidentId} but no active admins to notify.`,
+      );
+      return;
+    }
+    // PushPayload.data is `Record<string, string>` — coerce numerics +
+    // omit null lat/lng so they don't leak in as the literal "null".
+    const data: Record<string, string> = {
+      kind: 'incident.raised',
+      incidentId: event.incidentId,
+      orderId: event.orderId,
+      driverId: event.driverId,
+    };
+    if (event.latitude !== null && event.latitude !== undefined) {
+      data.latitude = String(event.latitude);
+    }
+    if (event.longitude !== null && event.longitude !== undefined) {
+      data.longitude = String(event.longitude);
+    }
+    const payload = {
+      notification: {
+        title: 'SOS — driver needs help',
+        body: `Driver ${event.driverId.slice(0, 8)} raised an SOS on order ${event.orderId.slice(0, 8)}. Open the admin console to acknowledge.`,
+      },
+      data,
+    };
+    for (const admin of admins) {
+      void this.fanout.send(admin.id, payload);
+    }
+  }
+
+  @OnEvent('incident.acknowledged')
+  onIncidentAcknowledged(event: IncidentAcknowledgedEvent): void {
+    void this.fanout.send(event.driverId, {
+      notification: {
+        title: 'We see you',
+        body: 'Support is on the way. An admin has acknowledged your SOS.',
+      },
+      data: {
+        kind: 'incident.acknowledged',
+        incidentId: event.incidentId,
+        orderId: event.orderId,
+        timeToAcknowledgeMs: String(event.timeToAcknowledgeMs),
+      },
     });
   }
 

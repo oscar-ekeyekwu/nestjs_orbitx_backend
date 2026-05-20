@@ -29,6 +29,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { InvitesModule } from './invites/invites.module';
 import { StorageModule } from './storage/storage.module';
+import { IncidentsModule } from './incidents/incidents.module';
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -93,6 +94,7 @@ import { StorageModule } from './storage/storage.module';
     DocumentsModule,
     ApprovalsModule,
     InvitesModule,
+    IncidentsModule,
   ],
   controllers: [],
   providers: [

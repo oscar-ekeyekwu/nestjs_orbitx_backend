@@ -5,16 +5,23 @@
 import { PushFanoutEventSubscribers } from './push-fanout.subscribers';
 import { PushFanoutService } from './push-fanout.service';
 import { DocumentOwnerType } from '../documents/entities/document.entity';
+import type { Repository } from 'typeorm';
+import type { User } from '../users/entities/user.entity';
 
 describe('PushFanoutEventSubscribers (ARCH-10)', () => {
   let fanout: jest.Mocked<PushFanoutService>;
+  let users: jest.Mocked<Repository<User>>;
   let subs: PushFanoutEventSubscribers;
 
   beforeEach(() => {
     fanout = {
       send: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<PushFanoutService>;
-    subs = new PushFanoutEventSubscribers(fanout);
+    // I6 — incident subscribers fan out to all active admin user_ids.
+    users = {
+      find: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<Repository<User>>;
+    subs = new PushFanoutEventSubscribers(fanout, users);
   });
 
   describe('document.expiring_soon', () => {
