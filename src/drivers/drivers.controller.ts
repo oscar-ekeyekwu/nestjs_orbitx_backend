@@ -67,7 +67,7 @@ export class DriversController {
 
   @Get('profile')
   getProfile(@CurrentUser() user: User) {
-    return this.driversService.findByUserId(user.id);
+    return this.driversService.findByUserIdWithVehicle(user.id);
   }
 
   @Get('stats')

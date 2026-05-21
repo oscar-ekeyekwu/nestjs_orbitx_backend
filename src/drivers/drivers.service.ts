@@ -18,7 +18,11 @@ import {
 } from './entities/driver-profile.entity';
 import { driverStateMachine } from './driver-state-machine';
 import { VehicleAssignment } from '../vehicles/entities/vehicle-assignment.entity';
-import { Vehicle, VehicleStatus } from '../vehicles/entities/vehicle.entity';
+import {
+  Vehicle,
+  VehicleOwnerType,
+  VehicleStatus,
+} from '../vehicles/entities/vehicle.entity';
 import { UserRole } from '../common/enums/user-role.enum';
 import { UsersService } from '../users/users.service';
 import { Naira, naira } from '../common/money';
@@ -170,6 +174,27 @@ export class DriversService {
         );
         profile.verificationStatus = DriverVerificationStatus.ACTIVE;
         await manager.save(profile);
+
+        // Approve the driver's pending individual-driver vehicle in the
+        // same transaction. The admin almost always means "this person
+        // is ready to drive" — having to click through to a separate
+        // Vehicles tab to approve the bike that came with the
+        // application is friction we don't need. Company-owned
+        // vehicles are NOT auto-approved here — they go through the
+        // company queue separately.
+        await manager.update(
+          Vehicle,
+          {
+            ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+            ownerId: profile.id,
+            status: VehicleStatus.PENDING_APPROVAL,
+          },
+          {
+            status: VehicleStatus.APPROVED,
+            approvedAt: new Date(),
+            approvedBy: caller?.id ?? null,
+          },
+        );
       }
 
       return profile;
@@ -261,6 +286,57 @@ export class DriversService {
     return this.driverProfileRepository.findOne({
       where: { userId },
       relations: ['user'],
+    });
+  }
+
+  /**
+   * Enriched profile fetch used by GET /drivers/profile. Stitches the
+   * driver's vehicle onto the row so the mobile profile screen can
+   * render type / plate / status without a second round-trip.
+   * Internal callers should still use findByUserId — they don't need
+   * the join and the extra query would just be ballast.
+   */
+  async findByUserIdWithVehicle(
+    userId: string,
+  ): Promise<DriverProfile | null> {
+    const profile = await this.findByUserId(userId);
+    if (!profile) return profile;
+    const vehicle = await this.findDriverVehicle(profile);
+    return Object.assign(profile, {
+      vehicle: vehicle
+        ? {
+            id: vehicle.id,
+            type: vehicle.type,
+            plate: vehicle.plate,
+            color: vehicle.color,
+            status: vehicle.status,
+          }
+        : null,
+    });
+  }
+
+  private async findDriverVehicle(
+    profile: DriverProfile,
+  ): Promise<Vehicle | null> {
+    // Individual drivers: vehicle owner is (INDIVIDUAL_DRIVER, profile.id).
+    // Pick the most-recently-created row; in practice a driver has at
+    // most one vehicle in this slot until the multi-vehicle story lands.
+    const owned = await this.vehicleRepository.findOne({
+      where: {
+        ownerType: VehicleOwnerType.INDIVIDUAL_DRIVER,
+        ownerId: profile.id,
+      },
+      order: { createdAt: 'DESC' },
+    });
+    if (owned) return owned;
+    // Company employees: look up the active VehicleAssignment row.
+    const assignment = await this.assignmentRepository.findOne({
+      where: { driverId: profile.userId, unassignedAt: IsNull() },
+      order: { assignedAt: 'DESC' },
+    });
+    if (!assignment) return null;
+    return this.vehicleRepository.findOne({
+      where: { id: assignment.vehicleId },
     });
   }
 
