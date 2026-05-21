@@ -158,10 +158,27 @@ export class DocumentsService {
     if (caller.role === UserRole.ADMIN) {
       if (filters.ownerType) where.ownerType = filters.ownerType;
       if (filters.ownerId) where.ownerId = filters.ownerId;
+    } else if (
+      filters.ownerType &&
+      filters.ownerType !== DocumentOwnerType.USER &&
+      filters.ownerId
+    ) {
+      // Non-admin asking for a non-user owner (e.g. vehicle / company)
+      // needs to prove they are authorized for THAT specific owner.
+      // Reuses the same owner-check the upload/view paths use so the
+      // KYC wizard can hydrate its "already uploaded" state on login
+      // without leaking another driver's vehicle docs.
+      await this.assertOwnerMatchesCaller(
+        filters.ownerType,
+        filters.ownerId,
+        caller,
+      );
+      where.ownerType = filters.ownerType;
+      where.ownerId = filters.ownerId;
     } else {
-      // Force non-admin lookups to caller.id under owner=user. Any
-      // attempt to pass a different ownerType / ownerId is ignored
-      // rather than rejected to keep the surface simple.
+      // Default for non-admins: scope to their own user docs. Any
+      // attempt to pass a different ownerType WITHOUT ownerId is
+      // ignored rather than rejected to keep the surface simple.
       where.ownerType = DocumentOwnerType.USER;
       where.ownerId = caller.id;
     }
