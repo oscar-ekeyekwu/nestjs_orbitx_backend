@@ -18,6 +18,7 @@ import {
 } from '../vehicles/entities/vehicle.entity';
 import { VehicleAssignment } from '../vehicles/entities/vehicle-assignment.entity';
 import { Company } from '../companies/entities/company.entity';
+import { DriverProfile } from '../drivers/entities/driver-profile.entity';
 import { StorageRegistry } from '../storage/storage-registry.service';
 import type { PresignedUpload } from '../storage/storage-adapter.interface';
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
@@ -51,6 +52,8 @@ export class DocumentsService {
     private readonly assignmentRepo: Repository<VehicleAssignment>,
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
+    @InjectRepository(DriverProfile)
+    private readonly driverProfileRepo: Repository<DriverProfile>,
     private readonly storageRegistry: StorageRegistry,
     private readonly dataSource: DataSource,
     private readonly expiryCron: DocumentExpiryCron,
@@ -439,11 +442,16 @@ export class DocumentsService {
       if (!vehicle) {
         throw new NotFoundException(`Vehicle ${ownerId} not found`);
       }
-      if (
-        vehicle.ownerType === VehicleOwnerType.INDIVIDUAL_DRIVER &&
-        vehicle.ownerId === caller.id
-      ) {
-        return;
+      // INDIVIDUAL_DRIVER vehicles store the driver_profile.id (NOT the
+      // user.id) in vehicle.ownerId — see VehiclesService.create. Resolve
+      // the profile and check its userId against the caller.
+      if (vehicle.ownerType === VehicleOwnerType.INDIVIDUAL_DRIVER) {
+        const profile = await this.driverProfileRepo.findOne({
+          where: { id: vehicle.ownerId, userId: caller.id },
+        });
+        if (profile) {
+          return;
+        }
       }
       if (vehicle.ownerType === VehicleOwnerType.COMPANY) {
         const company = await this.companyRepo.findOne({

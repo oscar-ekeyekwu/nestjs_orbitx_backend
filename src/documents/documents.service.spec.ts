@@ -83,6 +83,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
   let vehicleRepo: { findOne: jest.Mock };
   let assignmentRepo: { findOne: jest.Mock };
   let companyRepo: { findOne: jest.Mock };
+  let driverProfileRepo: { findOne: jest.Mock };
   let adapter: jest.Mocked<StorageAdapter>;
   let storageRegistry: jest.Mocked<StorageRegistry>;
   let dataSource: jest.Mocked<DataSource>;
@@ -108,11 +109,14 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       findOne: jest.fn().mockResolvedValue({
         id: 'vehicle-1',
         ownerType: 'individual_driver',
-        ownerId: 'someone-else',
+        ownerId: 'profile-someone-else',
       }),
     };
     assignmentRepo = { findOne: jest.fn().mockResolvedValue(null) };
     companyRepo = { findOne: jest.fn().mockResolvedValue(null) };
+    // Default: no driver_profile matches the caller, so vehicle docs
+    // owned by "profile-someone-else" stay forbidden.
+    driverProfileRepo = { findOne: jest.fn().mockResolvedValue(null) };
 
     adapter = {
       providerId: 'provider-1',
@@ -173,6 +177,7 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       vehicleRepo as never,
       assignmentRepo as never,
       companyRepo as never,
+      driverProfileRepo as never,
       storageRegistry,
       dataSource,
       expiryCron,
