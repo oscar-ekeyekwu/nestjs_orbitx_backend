@@ -30,15 +30,30 @@ export interface S3CompatibleAdapterConfig {
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
+  /**
+   * Optional. Defaults to `true` (path-style) because that's the only
+   * format every supported S3-compatible provider accepts. Set to
+   * `false` for legacy AWS buckets that require virtual-host style.
+   */
+  forcePathStyle?: boolean;
 }
 
 /**
- * STG-1 — generic S3-API adapter. Covers DigitalOcean Spaces (default),
- * Supabase Storage (`https://<project>.supabase.co/storage/v1/s3`), AWS S3,
- * Cloudflare R2 — anywhere the S3 wire protocol is honoured. The
- * `forcePathStyle: false` setting matches the pre-STG-1 Spaces wiring;
- * adapters for path-style endpoints (e.g. MinIO) can land via a separate
- * config branch when needed.
+ * STG-1 — generic S3-API adapter. Covers DigitalOcean Spaces, Supabase
+ * Storage (`https://<project>.supabase.co/storage/v1/s3`), AWS S3,
+ * Cloudflare R2, MinIO — anywhere the S3 wire protocol is honoured.
+ *
+ * `forcePathStyle` defaults to `true` because virtual-host addressing
+ * fails on every provider whose TLS cert doesn't cover
+ * `<bucket>.<endpoint-host>`. Supabase, R2, and MinIO ALL fail TLS
+ * handshake (alert 40) under virtual-host style; DO Spaces accepts both;
+ * AWS S3 still accepts path-style on every bucket created before 2020
+ * and continues to honour it indefinitely. Path-style is therefore the
+ * only setting that works for every supported provider out of the box.
+ *
+ * Per-provider override lives on the `storage_providers` row when present
+ * (STG-2 admin DTO), so a buckets-too-new AWS account can opt back into
+ * virtual-host style without code changes.
  */
 export class S3CompatibleAdapter implements StorageAdapter {
   readonly providerId: string;
@@ -60,7 +75,7 @@ export class S3CompatibleAdapter implements StorageAdapter {
         accessKeyId: cfg.accessKeyId,
         secretAccessKey: cfg.secretAccessKey,
       },
-      forcePathStyle: false,
+      forcePathStyle: cfg.forcePathStyle ?? true,
     };
     this.client = new S3Client(clientConfig);
   }
