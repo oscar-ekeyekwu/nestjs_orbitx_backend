@@ -329,7 +329,23 @@ export class DriversService {
       order: { createdAt: 'DESC' },
     });
     if (owned) return owned;
-    // Company employees: look up the active VehicleAssignment row.
+    // Company owners + employees: the wizard creates the vehicle under
+    // (COMPANY, profile.companyId) when accountType is company_*. Pick
+    // any vehicle from that company so the profile screen still has
+    // *something* to show. Multi-vehicle company drivers will need a
+    // proper assignment-aware UI in a follow-up.
+    if (profile.companyId) {
+      const companyVehicle = await this.vehicleRepository.findOne({
+        where: {
+          ownerType: VehicleOwnerType.COMPANY,
+          ownerId: profile.companyId,
+        },
+        order: { createdAt: 'DESC' },
+      });
+      if (companyVehicle) return companyVehicle;
+    }
+    // Last fallback: active VehicleAssignment (a driver moved between
+    // companies, or temporarily assigned to a vehicle they don't own).
     const assignment = await this.assignmentRepository.findOne({
       where: { driverId: profile.userId, unassignedAt: IsNull() },
       order: { assignedAt: 'DESC' },

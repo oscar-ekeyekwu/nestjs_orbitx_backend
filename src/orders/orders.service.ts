@@ -230,7 +230,7 @@ export class OrdersService {
     userRole: UserRole,
     queryDto: GetOrdersQueryDto,
   ): Promise<PaginatedResult<Order>> {
-    const { status } = queryDto;
+    const { status, driverId } = queryDto;
     const query = this.ordersRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.customer', 'customer')
@@ -240,6 +240,9 @@ export class OrdersService {
       query.where('order.customerId = :userId', { userId });
     } else if (userRole === UserRole.DRIVER) {
       query.where('order.driverId = :userId', { userId });
+    } else if (userRole === UserRole.ADMIN && driverId) {
+      // Admin-only driver scope, used by the DriverDetail cross-link.
+      query.where('order.driverId = :driverId', { driverId });
     }
 
     if (status) {
