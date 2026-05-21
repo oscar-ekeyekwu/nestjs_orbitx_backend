@@ -18,7 +18,10 @@ import {
 } from '../vehicles/entities/vehicle.entity';
 import { VehicleAssignment } from '../vehicles/entities/vehicle-assignment.entity';
 import { Company } from '../companies/entities/company.entity';
-import { DriverProfile } from '../drivers/entities/driver-profile.entity';
+import {
+  DriverProfile,
+  DriverVerificationStatus,
+} from '../drivers/entities/driver-profile.entity';
 import { StorageRegistry } from '../storage/storage-registry.service';
 import type { PresignedUpload } from '../storage/storage-adapter.interface';
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
@@ -141,7 +144,73 @@ export class DocumentsService {
       reviewedBy: null,
       rejectionReason: null,
     });
-    return this.documentRepo.save(doc);
+    const saved = await this.documentRepo.save(doc);
+
+    // Doc re-upload side effect — if the upload belongs to a driver
+    // who is already approved/active, flip them back to pending_approval
+    // so an admin re-reviews the new bytes before they keep operating.
+    // No-op for setup_required (the wizard handles that path) or
+    // suspended/rejected (other state-machine edges own those).
+    await this.maybeRequeueDriverForReview(dto.ownerType, dto.ownerId);
+
+    return saved;
+  }
+
+  /**
+   * Resolve a doc owner to a driver_profile and, if that driver is in
+   * APPROVED or ACTIVE, transition them to PENDING_APPROVAL via the
+   * system role. Best-effort: a failure here doesn't roll back the
+   * doc create. The C4 expiry cron's recovery hook reconciles in the
+   * rare case this misses.
+   */
+  private async maybeRequeueDriverForReview(
+    ownerType: DocumentOwnerType,
+    ownerId: string,
+  ): Promise<void> {
+    try {
+      let profile: DriverProfile | null = null;
+      if (ownerType === DocumentOwnerType.USER) {
+        profile = await this.driverProfileRepo.findOne({
+          where: { userId: ownerId },
+        });
+      } else if (ownerType === DocumentOwnerType.VEHICLE) {
+        const vehicle = await this.vehicleRepo.findOne({
+          where: { id: ownerId },
+        });
+        if (!vehicle) return;
+        if (vehicle.ownerType === VehicleOwnerType.INDIVIDUAL_DRIVER) {
+          profile = await this.driverProfileRepo.findOne({
+            where: { id: vehicle.ownerId },
+          });
+        }
+        // Company-owned vehicles intentionally don't requeue the driver
+        // here — the company's KYC is the relevant subject.
+      }
+      if (!profile) return;
+      const requeueable =
+        profile.verificationStatus === DriverVerificationStatus.APPROVED ||
+        profile.verificationStatus === DriverVerificationStatus.ACTIVE;
+      if (!requeueable) return;
+      profile.verificationStatus = DriverVerificationStatus.PENDING_APPROVAL;
+      // Force them offline — re-review is in progress and dispatch
+      // shouldn't see this driver until an admin re-approves.
+      profile.isOnline = false;
+      await this.driverProfileRepo.save(profile);
+      // Audit trail: record why the driver fell out of active so the
+      // admin can trace it later. NDPA / LASAA event log requirements.
+      await this.approvalsService.recordDecision(this.dataSource.manager, {
+        targetType: ApprovalTargetType.DRIVER,
+        targetId: profile.id,
+        action: ApprovalAction.SUSPEND,
+        reviewerId: null,
+        reason: 'Driver document re-uploaded — pending admin re-review.',
+      });
+    } catch {
+      // Best-effort — log-and-forget would be ideal here but the
+      // service's logger isn't wired in yet. Failure leaves the
+      // driver in their prior status; the next admin review on the
+      // new pending doc still picks them up.
+    }
   }
 
   /**

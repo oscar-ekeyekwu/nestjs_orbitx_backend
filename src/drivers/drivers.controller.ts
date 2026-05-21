@@ -67,7 +67,17 @@ export class DriversController {
 
   @Get('profile')
   getProfile(@CurrentUser() user: User) {
-    return this.driversService.findByUserId(user.id);
+    return this.driversService.findByUserIdWithVehicle(user.id);
+  }
+
+  // Admin lookup — resolve a driver_profile by user id. Used by the
+  // admin DriverDetail page to translate between the user.id it has
+  // in its URL and the driver_profile.id that audit decisions and the
+  // approvals queue use as their target id.
+  @Get('admin/by-user/:userId')
+  @Roles(UserRole.ADMIN)
+  getByUserId(@Param('userId', ParseUUIDPipe) userId: string) {
+    return this.driversService.findByUserIdWithVehicle(userId);
   }
 
   @Get('stats')

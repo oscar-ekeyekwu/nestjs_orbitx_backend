@@ -400,6 +400,7 @@ describe('DriversService', () => {
       findOne: jest.Mock;
       save: jest.Mock;
       insert: jest.Mock;
+      update: jest.Mock;
     }
     let manager: TxManager;
     let dataSource: { transaction: jest.Mock };
@@ -409,6 +410,9 @@ describe('DriversService', () => {
         findOne: jest.fn(),
         save: jest.fn((entity: unknown) => Promise.resolve(entity)),
         insert: jest.fn().mockResolvedValue({ identifiers: [{ id: 'ap-1' }] }),
+        // D1 chained-approve auto-approves the driver's pending vehicle
+        // via manager.update — fired with a partial criteria + payload.
+        update: jest.fn().mockResolvedValue({ affected: 0 }),
       };
       dataSource = {
         transaction: jest.fn((cb: (m: TxManager) => unknown) =>
@@ -540,6 +544,7 @@ describe('DriversService', () => {
       findOne: jest.Mock;
       save: jest.Mock;
       insert: jest.Mock;
+      update: jest.Mock;
     }
     let manager: TxManager;
     let dataSource: { transaction: jest.Mock };
@@ -549,6 +554,9 @@ describe('DriversService', () => {
         findOne: jest.fn(),
         save: jest.fn((entity: unknown) => Promise.resolve(entity)),
         insert: jest.fn().mockResolvedValue({ identifiers: [{ id: 'ap-1' }] }),
+        // D1 chained-approve auto-approves the driver's pending vehicle
+        // via manager.update — fired with a partial criteria + payload.
+        update: jest.fn().mockResolvedValue({ affected: 0 }),
       };
       dataSource = {
         transaction: jest.fn((cb: (m: TxManager) => unknown) =>
