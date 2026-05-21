@@ -80,6 +80,9 @@ function extractErrorCode(err: unknown): string | undefined {
 describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
   let service: DocumentsService;
   let documentRepo: jest.Mocked<Repository<Document>>;
+  let vehicleRepo: { findOne: jest.Mock };
+  let assignmentRepo: { findOne: jest.Mock };
+  let companyRepo: { findOne: jest.Mock };
   let adapter: jest.Mocked<StorageAdapter>;
   let storageRegistry: jest.Mocked<StorageRegistry>;
   let dataSource: jest.Mocked<DataSource>;
@@ -95,6 +98,21 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
         Promise.resolve({ ...entity, id: 'doc-new' }),
       ),
     } as unknown as jest.Mocked<Repository<Document>>;
+
+    // Default ownership: the lookup returns a vehicle owned by
+    // 'someone-else', so vehicle / company tests that don't set up a
+    // specific relationship deny the caller — preserving the
+    // "non-admin cannot touch other-owner docs" intent of the
+    // pre-D2/D3/D4 placeholder.
+    vehicleRepo = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'vehicle-1',
+        ownerType: 'individual_driver',
+        ownerId: 'someone-else',
+      }),
+    };
+    assignmentRepo = { findOne: jest.fn().mockResolvedValue(null) };
+    companyRepo = { findOne: jest.fn().mockResolvedValue(null) };
 
     adapter = {
       providerId: 'provider-1',
@@ -152,6 +170,9 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
 
     service = new DocumentsService(
       documentRepo,
+      vehicleRepo as never,
+      assignmentRepo as never,
+      companyRepo as never,
       storageRegistry,
       dataSource,
       expiryCron,

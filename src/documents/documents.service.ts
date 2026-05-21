@@ -5,14 +5,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, LessThanOrEqual, Repository } from 'typeorm';
+import { DataSource, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Document,
   DocumentOwnerType,
   DocumentStatus,
-  DocumentType,
 } from './entities/document.entity';
+import {
+  Vehicle,
+  VehicleOwnerType,
+} from '../vehicles/entities/vehicle.entity';
+import { VehicleAssignment } from '../vehicles/entities/vehicle-assignment.entity';
+import { Company } from '../companies/entities/company.entity';
 import { StorageRegistry } from '../storage/storage-registry.service';
 import type { PresignedUpload } from '../storage/storage-adapter.interface';
 import { GetUploadUrlDto } from './dto/get-upload-url.dto';
@@ -40,6 +45,12 @@ export class DocumentsService {
   constructor(
     @InjectRepository(Document)
     private readonly documentRepo: Repository<Document>,
+    @InjectRepository(Vehicle)
+    private readonly vehicleRepo: Repository<Vehicle>,
+    @InjectRepository(VehicleAssignment)
+    private readonly assignmentRepo: Repository<VehicleAssignment>,
+    @InjectRepository(Company)
+    private readonly companyRepo: Repository<Company>,
     private readonly storageRegistry: StorageRegistry,
     private readonly dataSource: DataSource,
     private readonly expiryCron: DocumentExpiryCron,
@@ -59,7 +70,7 @@ export class DocumentsService {
   ): Promise<PresignedUpload> {
     this.assertAllowedMime(dto.contentType);
     if (caller.role !== UserRole.ADMIN) {
-      this.assertOwnerMatchesCaller(dto.ownerType, dto.ownerId, caller);
+      await this.assertOwnerMatchesCaller(dto.ownerType, dto.ownerId, caller);
     }
     const adapter = await this.storageRegistry.getActive();
     return adapter.generateUploadUrl(dto);
@@ -86,7 +97,7 @@ export class DocumentsService {
     caller: User,
   ): Promise<Document> {
     if (caller.role !== UserRole.ADMIN) {
-      this.assertOwnerMatchesCaller(dto.ownerType, dto.ownerId, caller);
+      await this.assertOwnerMatchesCaller(dto.ownerType, dto.ownerId, caller);
     }
 
     this.assertObjectKeyMatchesOwner(dto);
@@ -187,7 +198,7 @@ export class DocumentsService {
       throw new NotFoundException(`Document ${id} not found`);
     }
     if (caller.role !== UserRole.ADMIN) {
-      this.assertOwnerMatchesCaller(doc.ownerType, doc.ownerId, caller);
+      await this.assertOwnerMatchesCaller(doc.ownerType, doc.ownerId, caller);
     }
     return doc;
   }
@@ -309,7 +320,7 @@ export class DocumentsService {
       throw new NotFoundException(`Document ${documentId} not found`);
     }
     if (caller.role !== UserRole.ADMIN) {
-      this.assertOwnerMatchesCaller(doc.ownerType, doc.ownerId, caller);
+      await this.assertOwnerMatchesCaller(doc.ownerType, doc.ownerId, caller);
     }
     if (!doc.fileKey) {
       // Document was created without an S3 key (legacy data or
@@ -381,11 +392,20 @@ export class DocumentsService {
     }
   }
 
-  private assertOwnerMatchesCaller(
+  /**
+   * Non-admin authorization for the upload / register / view paths.
+   *
+   *   user     — ownerId must equal caller.id.
+   *   vehicle  — caller must be (a) the individual-driver owner,
+   *              (b) the creator of the owning company, or
+   *              (c) an actively-assigned driver on the vehicle.
+   *   company  — caller must be the creator of the company.
+   */
+  private async assertOwnerMatchesCaller(
     ownerType: DocumentOwnerType,
     ownerId: string,
     caller: User,
-  ): void {
+  ): Promise<void> {
     if (ownerType === DocumentOwnerType.USER) {
       if (ownerId !== caller.id) {
         throw new ForbiddenException(
@@ -394,15 +414,55 @@ export class DocumentsService {
       }
       return;
     }
-    // Vehicle + company ownership uses richer relationships:
-    //   - vehicle docs need an active assignment (driver) or company
-    //     membership (company-owned vehicle)
-    //   - company docs need an approved membership
-    // Both lookups land alongside D2 / D3 / D4 (setup wizards + invite
-    // flow). Until those wire up the relationship checks, only admins
-    // can act on vehicle / company docs — safe default.
-    throw new ForbiddenException(
-      `Owner check for ownerType=${ownerType} is admin-only until D2 / D3 / D4 wire up the assignment / membership lookups.`,
-    );
+
+    if (ownerType === DocumentOwnerType.VEHICLE) {
+      const vehicle = await this.vehicleRepo.findOne({
+        where: { id: ownerId },
+      });
+      if (!vehicle) {
+        throw new NotFoundException(`Vehicle ${ownerId} not found`);
+      }
+      if (
+        vehicle.ownerType === VehicleOwnerType.INDIVIDUAL_DRIVER &&
+        vehicle.ownerId === caller.id
+      ) {
+        return;
+      }
+      if (vehicle.ownerType === VehicleOwnerType.COMPANY) {
+        const company = await this.companyRepo.findOne({
+          where: { id: vehicle.ownerId, createdBy: caller.id },
+        });
+        if (company) {
+          return;
+        }
+      }
+      const activeAssignment = await this.assignmentRepo.findOne({
+        where: {
+          vehicleId: vehicle.id,
+          driverId: caller.id,
+          unassignedAt: IsNull(),
+        },
+      });
+      if (activeAssignment) {
+        return;
+      }
+      throw new ForbiddenException(
+        'You can only manage documents for vehicles you own, your company owns, or you are actively assigned to.',
+      );
+    }
+
+    if (ownerType === DocumentOwnerType.COMPANY) {
+      const company = await this.companyRepo.findOne({
+        where: { id: ownerId, createdBy: caller.id },
+      });
+      if (!company) {
+        throw new ForbiddenException(
+          'You can only manage documents for companies you own.',
+        );
+      }
+      return;
+    }
+
+    throw new ForbiddenException(`Unsupported ownerType: ${ownerType}`);
   }
 }
