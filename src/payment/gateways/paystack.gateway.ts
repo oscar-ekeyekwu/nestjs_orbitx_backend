@@ -25,6 +25,13 @@ export interface PaystackGatewayConfig {
    * other gateways that mandate it) drop in without a schema change.
    */
   webhookSecret?: string | null;
+  /**
+   * Preferred bank slug for the DVA assign call. Paystack live mode
+   * supports `wema-bank`, `access-bank`, `titan-paystack`; test mode
+   * supports only `test-bank`. Null/undefined lets the adapter pick
+   * a sensible default from the secret-key prefix.
+   */
+  preferredBank?: string | null;
 }
 
 interface PaystackEnvelope<T> {
@@ -95,6 +102,7 @@ export class PaystackGateway implements IPaymentGateway {
   private readonly secretKey: string;
   private readonly webhookSecret: string;
   private readonly baseUrl: string;
+  private readonly configuredPreferredBank: string | null;
 
   constructor(config: PaystackGatewayConfig) {
     this.providerId = config.providerId;
@@ -102,6 +110,7 @@ export class PaystackGateway implements IPaymentGateway {
     this.secretKey = config.secretKey;
     this.webhookSecret = config.webhookSecret || config.secretKey;
     this.baseUrl = config.baseUrl;
+    this.configuredPreferredBank = config.preferredBank ?? null;
   }
 
   async createVirtualAccount(params: {
@@ -148,7 +157,10 @@ export class PaystackGateway implements IPaymentGateway {
         first_name: params.name.split(' ')[0] || params.name,
         last_name: params.name.split(' ').slice(1).join(' ') || params.name,
         phone: '+2340000000000',
-        preferred_bank: 'wema-bank',
+        // Paystack live mode supports wema-bank / access-bank / titan-paystack;
+        // test mode only supports `test-bank`. Sniff the key prefix so a
+        // staging deploy with an sk_test_… key doesn't fail at DVA assign.
+        preferred_bank: this.preferredDvaBank(),
         country: 'NG',
         customer: customerCode,
       }),
@@ -167,11 +179,32 @@ export class PaystackGateway implements IPaymentGateway {
 
     return {
       accountNumber: account.account_number,
-      bankName: account.bank?.name ?? account.bank_name ?? 'Wema Bank',
+      bankName:
+        account.bank?.name ??
+        account.bank_name ??
+        (this.isTestMode() ? 'Test Bank' : 'Wema Bank'),
       accountName: account.account_name,
       providerReference: account.id?.toString() ?? account.account_number,
       provider: 'paystack',
     };
+  }
+
+  private isTestMode(): boolean {
+    return this.secretKey.startsWith('sk_test_');
+  }
+
+  /**
+   * DVA preferred-bank resolution order:
+   *   1. Admin-configured `preferredBank` on the payment_providers row
+   *      (so production can target Access / Titan / Wema without
+   *      redeploying).
+   *   2. `test-bank` when the secret key is in test mode — Paystack
+   *      doesn't expose any other bank in test mode.
+   *   3. `wema-bank` as the documented live-mode default.
+   */
+  private preferredDvaBank(): string {
+    if (this.configuredPreferredBank) return this.configuredPreferredBank;
+    return this.isTestMode() ? 'test-bank' : 'wema-bank';
   }
 
   private async fetchCustomerCode(email: string): Promise<string> {

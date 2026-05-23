@@ -164,6 +164,7 @@ export class PaymentGatewayRegistry implements OnModuleInit {
           baseUrl: row.baseUrl,
           secretKey,
           webhookSecret,
+          preferredBank: row.preferredBank,
         });
       default: {
         const exhaustive: never = row.kind;
