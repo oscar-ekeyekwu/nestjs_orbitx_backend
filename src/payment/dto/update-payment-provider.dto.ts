@@ -35,6 +35,15 @@ export class UpdatePaymentProviderDto {
 
   @ApiPropertyOptional({
     description:
+      'Gateway-specific routing hint. For Paystack, the DVA preferred bank slug. Pass null/empty to clear and let the adapter auto-pick.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  preferredBank?: string | null;
+
+  @ApiPropertyOptional({
+    description:
       'New plaintext secret key. Omit to keep the existing encrypted secret.',
   })
   @IsOptional()

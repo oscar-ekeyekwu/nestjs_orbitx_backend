@@ -50,6 +50,13 @@ export class PaymentProvider {
   @Column({ type: 'varchar', length: 256, nullable: true })
   publicKey: string | null;
 
+  // Gateway-specific routing hint. For Paystack this is the DVA
+  // `preferred_bank` slug (`wema-bank`, `access-bank`, `titan-paystack`
+  // on live; `test-bank` on test). Null lets the adapter pick a sensible
+  // default by inspecting the secret key prefix.
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  preferredBank: string | null;
+
   @Column({ type: 'bytea' })
   secretCipher: Buffer;
 

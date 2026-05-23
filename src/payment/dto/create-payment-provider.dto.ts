@@ -50,6 +50,16 @@ export class CreatePaymentProviderDto {
   @MaxLength(256)
   publicKey?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Gateway-specific routing hint. For Paystack, the DVA preferred bank slug (wema-bank, access-bank, titan-paystack on live; test-bank on test). Omit to let the adapter auto-pick.',
+    example: 'wema-bank',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  preferredBank?: string;
+
   @ApiProperty({ description: 'Plaintext secret key — encrypted before persist.' })
   @IsString()
   @MinLength(8)

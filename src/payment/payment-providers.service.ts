@@ -28,6 +28,7 @@ export interface PaymentProviderView {
   displayName: string;
   baseUrl: string;
   publicKey: string | null;
+  preferredBank: string | null;
   secretKeyMasked: string;
   hasDedicatedWebhookSecret: boolean;
   enabled: boolean;
@@ -86,6 +87,7 @@ export class PaymentProvidersService {
       displayName: dto.displayName,
       baseUrl: dto.baseUrl,
       publicKey: dto.publicKey ?? null,
+      preferredBank: dto.preferredBank ?? null,
       secretCipher: secret.cipher,
       secretNonce: secret.nonce,
       secretTag: secret.tag,
@@ -123,6 +125,12 @@ export class PaymentProvidersService {
     if (dto.displayName !== undefined) row.displayName = dto.displayName;
     if (dto.baseUrl !== undefined) row.baseUrl = dto.baseUrl;
     if (dto.publicKey !== undefined) row.publicKey = dto.publicKey;
+    if (dto.preferredBank !== undefined) {
+      // Treat empty string as a clear so the form can null it out
+      // with a single text input.
+      row.preferredBank =
+        dto.preferredBank === '' ? null : dto.preferredBank;
+    }
     if (dto.enabled !== undefined) row.enabled = dto.enabled;
 
     if (dto.secretKey) {
@@ -276,6 +284,7 @@ export class PaymentProvidersService {
       displayName: row.displayName,
       baseUrl: row.baseUrl,
       publicKey: row.publicKey,
+      preferredBank: row.preferredBank,
       secretKeyMasked: masked,
       hasDedicatedWebhookSecret: !!row.webhookSecretCipher,
       enabled: row.enabled,
