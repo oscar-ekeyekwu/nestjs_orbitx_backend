@@ -148,7 +148,10 @@ export class PaystackGateway implements IPaymentGateway {
         first_name: params.name.split(' ')[0] || params.name,
         last_name: params.name.split(' ').slice(1).join(' ') || params.name,
         phone: '+2340000000000',
-        preferred_bank: 'wema-bank',
+        // Paystack live mode supports wema-bank / access-bank / titan-paystack;
+        // test mode only supports `test-bank`. Sniff the key prefix so a
+        // staging deploy with an sk_test_… key doesn't fail at DVA assign.
+        preferred_bank: this.preferredDvaBank(),
         country: 'NG',
         customer: customerCode,
       }),
@@ -167,11 +170,22 @@ export class PaystackGateway implements IPaymentGateway {
 
     return {
       accountNumber: account.account_number,
-      bankName: account.bank?.name ?? account.bank_name ?? 'Wema Bank',
+      bankName:
+        account.bank?.name ??
+        account.bank_name ??
+        (this.isTestMode() ? 'Test Bank' : 'Wema Bank'),
       accountName: account.account_name,
       providerReference: account.id?.toString() ?? account.account_number,
       provider: 'paystack',
     };
+  }
+
+  private isTestMode(): boolean {
+    return this.secretKey.startsWith('sk_test_');
+  }
+
+  private preferredDvaBank(): string {
+    return this.isTestMode() ? 'test-bank' : 'wema-bank';
   }
 
   private async fetchCustomerCode(email: string): Promise<string> {
