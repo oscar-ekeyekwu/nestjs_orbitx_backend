@@ -13,6 +13,7 @@ import {
   UseGuards,
   Logger,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { IsUUID } from 'class-validator';
@@ -41,6 +42,7 @@ export class PaymentController {
   constructor(
     private readonly paymentService: PaymentService,
     private readonly walletService: WalletService,
+    private readonly events: EventEmitter2,
   ) {}
 
   // ARCH-13 — customer initializes a Paystack hosted-page charge for
@@ -143,27 +145,78 @@ export class PaymentController {
       return { received: true };
     }
 
-    // Legacy virtual-account funding path — unchanged.
+    // Virtual-account funding path. Paystack DVA charge.success
+    // events don't carry our userId on `charge.metadata`; the
+    // gateway parser already lifts it from `customer.metadata` and
+    // forwards `receiverAccountNumber` for accounts where the
+    // customer-metadata copy isn't reliable. We try each signal in
+    // order so attribution survives different Paystack payload
+    // shapes.
     if (event.kind === 'payment') {
-      const userId = event.metadata?.userId;
-      if (userId) {
-        try {
-          const addFundsDto: AddFundsDto = {
-            amount: event.amount,
-            paymentMethod: PaymentMethod.BANK_TRANSFER,
-            reference: event.reference,
-            description: 'Virtual account funding',
-          };
-          await this.walletService.addFunds(userId, addFundsDto);
-          this.logger.log(`Funded wallet for user ${userId}: ₦${event.amount}`);
-        } catch (error) {
-          this.logger.error(
-            `Failed to fund wallet for user ${userId}: ${error}`,
-          );
-        }
+      const userId = await this.resolveFundingUserId(event.metadata);
+      if (!userId) {
+        this.logger.warn(
+          `Paystack payment.success ref=${event.reference} could not be attributed to a user (no metadata.userId, customerCode, or receiverAccountNumber match). Dropping.`,
+        );
+        return { received: true };
+      }
+      try {
+        const addFundsDto: AddFundsDto = {
+          amount: event.amount,
+          paymentMethod: PaymentMethod.BANK_TRANSFER,
+          reference: event.reference,
+          description: 'Virtual account funding',
+        };
+        await this.walletService.addFunds(userId, addFundsDto);
+        this.logger.log(`Funded wallet for user ${userId}: ₦${event.amount}`);
+        // Post-commit fan-out: push notification + socket nudge so the
+        // mobile wallet refreshes without pull-to-refresh. Both are
+        // best-effort — failures here MUST NOT 5xx the webhook (or
+        // Paystack will retry and we'd double-fund — `addFunds` is
+        // reference-idempotent so a retry is technically safe, but
+        // still noisy).
+        this.events.emit('wallet.funded', {
+          userId,
+          amountNaira: event.amount,
+          reference: event.reference,
+        });
+      } catch (error) {
+        this.logger.error(
+          `Failed to fund wallet for user ${userId}: ${error}`,
+        );
       }
     }
 
     return { received: true };
+  }
+
+  /**
+   * Walk the metadata signals in attribution-confidence order:
+   *   1. Charge-level userId (server-issued reference, very rare for DVA)
+   *   2. Customer-level userId (we tagged the customer at create-time)
+   *   3. Receiving DVA account number → look up in virtual_accounts
+   *
+   * Returns null when nothing matches; the caller logs + drops the
+   * event. Test webhooks and DVAs created outside our backend land
+   * here.
+   */
+  private async resolveFundingUserId(
+    metadata: { [key: string]: unknown } | undefined,
+  ): Promise<string | null> {
+    if (!metadata) return null;
+    const direct = typeof metadata.userId === 'string' ? metadata.userId : null;
+    if (direct) return direct;
+    const accountNumber =
+      typeof metadata.receiverAccountNumber === 'string'
+        ? metadata.receiverAccountNumber
+        : null;
+    if (accountNumber) {
+      const owner =
+        await this.walletService.findUserIdByVirtualAccountNumber(
+          accountNumber,
+        );
+      if (owner) return owner;
+    }
+    return null;
   }
 }

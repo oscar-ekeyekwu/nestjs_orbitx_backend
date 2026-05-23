@@ -44,6 +44,17 @@ export interface ReviewEvent {
   reason?: string | null;
 }
 
+// PAY-1 — wallet funding event emitted post-commit by the Paystack
+// webhook handler after addFunds succeeds. The push subscriber
+// renders a "Wallet funded" notification; RealtimeGateway emits the
+// same event as a socket message so the mobile wallet refreshes
+// without pull-to-refresh.
+export interface WalletFundedEvent {
+  userId: string;
+  amountNaira: number;
+  reference: string;
+}
+
 /**
  * ARCH-10 — event-to-push subscriber. Lives in NotificationsModule so
  * the routing logic is colocated with the channel. Each handler keeps
@@ -162,6 +173,26 @@ export class PushFanoutEventSubscribers {
           'Your driver verification was rejected. Re-submit with the requested updates.',
       },
       data: { kind: 'driver.rejected' },
+    });
+  }
+
+  // ────────────────────────────────── Wallet funding events
+  @OnEvent('wallet.funded')
+  onWalletFunded(event: WalletFundedEvent): void {
+    const amount = `₦${Number(event.amountNaira).toLocaleString('en-NG', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    })}`;
+    void this.fanout.send(event.userId, {
+      notification: {
+        title: 'Wallet funded',
+        body: `${amount} has been added to your wallet.`,
+      },
+      data: {
+        kind: 'wallet.funded',
+        reference: event.reference,
+        amountNaira: String(event.amountNaira),
+      },
     });
   }
 

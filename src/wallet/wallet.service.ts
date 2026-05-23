@@ -553,6 +553,22 @@ export class WalletService {
   }
 
   /**
+   * Resolve the user id that owns a given virtual-account number.
+   * Used by the Paystack webhook handler to attribute a DVA funding
+   * event to a wallet when the charge metadata doesn't carry a
+   * userId. Returns null when no matching row exists (stray webhook,
+   * test event, deleted account).
+   */
+  async findUserIdByVirtualAccountNumber(
+    accountNumber: string,
+  ): Promise<string | null> {
+    const row = await this.virtualAccountRepository.findOne({
+      where: { accountNumber },
+    });
+    return row?.userId ?? null;
+  }
+
+  /**
    * Get or create a virtual account for a driver (idempotent)
    */
   async getOrCreateVirtualAccount(
