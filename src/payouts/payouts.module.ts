@@ -17,8 +17,8 @@ import { PaymentModule } from '../payment/payment.module';
   imports: [
     TypeOrmModule.forFeature([Payout, Wallet, User]),
     SystemConfigModule,
-    // PaymentModule exports the IPaymentGateway provider that
-    // PayoutsService injects via the 'PAYMENT_GATEWAY' DI token.
+    // PaymentModule exports the PaymentGatewayRegistry that PayoutsService
+    // injects to resolve the currently-active gateway per request.
     PaymentModule,
   ],
   providers: [PayoutsService, PayoutsCron],

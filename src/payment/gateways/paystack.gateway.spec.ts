@@ -1,18 +1,16 @@
 import * as crypto from 'crypto';
-import { ConfigService } from '@nestjs/config';
 import { PaystackGateway } from './paystack.gateway';
 
 const SECRET = 'sk_test_secret';
 
 function buildGateway(): PaystackGateway {
-  const config = {
-    get: jest.fn((key: string) => {
-      if (key === 'PAYSTACK_SECRET_KEY') return SECRET;
-      if (key === 'PAYSTACK_BASE_URL') return 'https://paystack.test';
-      return undefined;
-    }),
-  } as unknown as ConfigService;
-  return new PaystackGateway(config);
+  return new PaystackGateway({
+    providerId: 'provider-test',
+    providerSlug: 'paystack-test',
+    baseUrl: 'https://paystack.test',
+    secretKey: SECRET,
+    webhookSecret: null,
+  });
 }
 
 function signedBody(payload: unknown): { body: Buffer; signature: string } {

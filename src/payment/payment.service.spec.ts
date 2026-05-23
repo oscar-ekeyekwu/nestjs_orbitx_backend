@@ -13,6 +13,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
 import { PaymentService } from './payment.service';
+import { PaymentGatewayRegistry } from './payment-gateway.registry';
 import { Order } from '../orders/entities/order.entity';
 import {
   PaymentMethod,
@@ -65,6 +66,13 @@ function buildWallet(overrides: Partial<Wallet> = {}): Wallet {
 describe('PaymentService (ARCH-13)', () => {
   let service: PaymentService;
   let gateway: jest.Mocked<IPaymentGateway>;
+  let registry: {
+    getActive: jest.Mock;
+    get: jest.Mock;
+    invalidate: jest.Mock;
+    invalidateAll: jest.Mock;
+    cacheSize: jest.Mock;
+  };
   let transactionsRepo: {
     findOne: jest.Mock;
     save: jest.Mock;
@@ -81,6 +89,8 @@ describe('PaymentService (ARCH-13)', () => {
 
   beforeEach(async () => {
     gateway = {
+      providerId: 'provider-test',
+      providerSlug: 'paystack-test',
       createVirtualAccount: jest.fn(),
       initializePayment: jest.fn().mockResolvedValue({
         accessCode: 'AC-1',
@@ -94,6 +104,15 @@ describe('PaymentService (ARCH-13)', () => {
       createTransfer: jest.fn(),
       verifyWebhookSignature: jest.fn(),
       parseWebhookEvent: jest.fn(),
+      // PAY-1 — registry's admin test surface. Not exercised here.
+      testConnection: jest.fn(),
+    };
+    registry = {
+      getActive: jest.fn().mockResolvedValue(gateway),
+      get: jest.fn().mockResolvedValue(gateway),
+      invalidate: jest.fn(),
+      invalidateAll: jest.fn(),
+      cacheSize: jest.fn(() => 0),
     };
     transactionsRepo = {
       findOne: jest.fn(),
@@ -122,7 +141,7 @@ describe('PaymentService (ARCH-13)', () => {
     const mod = await Test.createTestingModule({
       providers: [
         PaymentService,
-        { provide: 'PAYMENT_GATEWAY', useValue: gateway },
+        { provide: PaymentGatewayRegistry, useValue: registry },
         {
           provide: getRepositoryToken(Transaction),
           useValue: transactionsRepo,
@@ -427,11 +446,12 @@ describe('PaymentService (ARCH-13)', () => {
   });
 
   describe('verifyWebhookSignature passthrough', () => {
-    it('delegates to the underlying gateway', () => {
+    it('resolves the active gateway and delegates', async () => {
       gateway.verifyWebhookSignature.mockReturnValueOnce(true);
-      const ok = service.verifyWebhookSignature(Buffer.from('x'), 'sig');
+      const ok = await service.verifyWebhookSignature(Buffer.from('x'), 'sig');
       expect(ok).toBe(true);
       expect(gateway.verifyWebhookSignature).toHaveBeenCalled();
+      expect(registry.getActive).toHaveBeenCalled();
     });
   });
 });

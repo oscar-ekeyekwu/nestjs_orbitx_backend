@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ForbiddenException,
-  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -21,7 +20,7 @@ import { Wallet } from '../wallet/entities/wallet.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../common/enums/user-role.enum';
 import { Naira, NAIRA_ZERO, naira } from '../common/money';
-import type { IPaymentGateway } from '../payment/interfaces/payment-gateway.interface';
+import { PaymentGatewayRegistry } from '../payment/payment-gateway.registry';
 import { Payout, PayoutMethod, PayoutStatus } from './entities/payout.entity';
 
 export interface MarkManualCompleteInput {
@@ -59,8 +58,7 @@ export class PayoutsService {
     private readonly usersRepo: Repository<User>,
     private readonly dataSource: DataSource,
     private readonly configService: SystemConfigService,
-    @Inject('PAYMENT_GATEWAY')
-    private readonly gateway: IPaymentGateway,
+    private readonly registry: PaymentGatewayRegistry,
     private readonly events: EventEmitter2,
   ) {}
 
@@ -148,7 +146,8 @@ export class PayoutsService {
           status: PayoutStatus.PROCESSING,
           method: PayoutMethod.AUTO,
         });
-        const result = await this.gateway.createTransfer({
+        const gateway = await this.registry.getActive();
+        const result = await gateway.createTransfer({
           amountNaira: Number(payout.amount.toString()),
           recipientCode: code,
           reference: payout.id,

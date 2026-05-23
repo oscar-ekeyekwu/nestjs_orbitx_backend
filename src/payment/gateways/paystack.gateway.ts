@@ -1,5 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
 import type {
   CreateTransferInput,
@@ -7,11 +6,26 @@ import type {
   InitializePaymentInput,
   InitializePaymentResult,
   IPaymentGateway,
+  TestConnectionResult,
   VerifyPaymentResult,
   VirtualAccountResult,
   WebhookEvent,
   WebhookEventMetadata,
 } from '../interfaces/payment-gateway.interface';
+
+export interface PaystackGatewayConfig {
+  providerId: string;
+  providerSlug: string;
+  baseUrl: string;
+  secretKey: string;
+  /**
+   * Optional dedicated webhook signing secret. When unset, falls back
+   * to `secretKey` — Paystack's documented signature scheme uses the
+   * main secret. Storing them separately lets future-Paystack (or
+   * other gateways that mandate it) drop in without a schema change.
+   */
+  webhookSecret?: string | null;
+}
 
 interface PaystackEnvelope<T> {
   status: boolean;
@@ -60,18 +74,25 @@ interface PaystackTransferResponse {
   status: string;
 }
 
-@Injectable()
+/**
+ * PAY-1 — Paystack adapter. Pure class (no Nest DI in the constructor)
+ * so the PaymentGatewayRegistry can instantiate one per provider row,
+ * with credentials decrypted just-in-time. Logger is class-scoped.
+ */
 export class PaystackGateway implements IPaymentGateway {
   private readonly logger = new Logger(PaystackGateway.name);
+  readonly providerId: string;
+  readonly providerSlug: string;
   private readonly secretKey: string;
+  private readonly webhookSecret: string;
   private readonly baseUrl: string;
 
-  constructor(private configService: ConfigService) {
-    this.secretKey =
-      this.configService.get<string>('PAYSTACK_SECRET_KEY') || '';
-    this.baseUrl =
-      this.configService.get<string>('PAYSTACK_BASE_URL') ||
-      'https://api.paystack.co';
+  constructor(config: PaystackGatewayConfig) {
+    this.providerId = config.providerId;
+    this.providerSlug = config.providerSlug;
+    this.secretKey = config.secretKey;
+    this.webhookSecret = config.webhookSecret || config.secretKey;
+    this.baseUrl = config.baseUrl;
   }
 
   async createVirtualAccount(params: {
@@ -284,10 +305,44 @@ export class PaystackGateway implements IPaymentGateway {
 
   verifyWebhookSignature(payload: Buffer, signature: string): boolean {
     const hash = crypto
-      .createHmac('sha512', this.secretKey)
+      .createHmac('sha512', this.webhookSecret)
       .update(payload)
       .digest('hex');
     return hash === signature;
+  }
+
+  /**
+   * PAY-1 — `/balance` is the cheapest authenticated paystack endpoint
+   * we can hit. Success proves the secret key is valid + the network
+   * path works; failure surfaces a sanitised error so the admin Test
+   * button can render something useful without leaking the key.
+   */
+  async testConnection(): Promise<TestConnectionResult> {
+    const startedAt = Date.now();
+    try {
+      const res = await fetch(`${this.baseUrl}/balance`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.secretKey}` },
+      });
+      const latencyMs = Date.now() - startedAt;
+      if (!res.ok) {
+        return {
+          ok: false,
+          error: `Paystack rejected the request (HTTP ${res.status}). Verify the secret key is current.`,
+        };
+      }
+      const envelope = (await res.json()) as PaystackEnvelope<unknown>;
+      if (!envelope.status) {
+        return {
+          ok: false,
+          error: `Paystack returned status=false: ${envelope.message ?? 'unknown error'}`,
+        };
+      }
+      return { ok: true, latencyMs };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `Network error contacting Paystack: ${message}` };
+    }
   }
 
   parseWebhookEvent(payload: unknown): WebhookEvent | null {
