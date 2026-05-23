@@ -20,6 +20,9 @@ export enum ApprovalTargetType {
   STORAGE_PROVIDER = 'storage_provider',
   // STG-4 — audit row for cross-provider document migration jobs.
   STORAGE_MIGRATION = 'storage_migration',
+  // PAY-1 — audit row for credential / activation events on the
+  // payment_providers table.
+  PAYMENT_PROVIDER = 'payment_provider',
 }
 
 export enum ApprovalAction {

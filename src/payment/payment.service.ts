@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ForbiddenException,
-  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -20,11 +19,11 @@ import { Wallet } from '../wallet/entities/wallet.entity';
 import { NAIRA_ZERO, naira, type Naira } from '../common/money';
 import type {
   InitializePaymentResult,
-  IPaymentGateway,
   VerifyPaymentResult,
   VirtualAccountResult,
   WebhookEvent,
 } from './interfaces/payment-gateway.interface';
+import { PaymentGatewayRegistry } from './payment-gateway.registry';
 
 export interface InitializeOrderPaymentResult extends InitializePaymentResult {
   transactionId: string;
@@ -60,8 +59,7 @@ export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
 
   constructor(
-    @Inject('PAYMENT_GATEWAY')
-    private readonly gateway: IPaymentGateway,
+    private readonly registry: PaymentGatewayRegistry,
     @InjectRepository(Transaction)
     private readonly transactionsRepo: Repository<Transaction>,
     @InjectRepository(Order)
@@ -70,21 +68,27 @@ export class PaymentService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  createVirtualAccount(params: {
+  async createVirtualAccount(params: {
     userId: string;
     name: string;
     email: string;
     bvn?: string;
   }): Promise<VirtualAccountResult> {
-    return this.gateway.createVirtualAccount(params);
+    const gateway = await this.registry.getActive();
+    return gateway.createVirtualAccount(params);
   }
 
-  verifyWebhookSignature(payload: Buffer, signature: string): boolean {
-    return this.gateway.verifyWebhookSignature(payload, signature);
+  async verifyWebhookSignature(
+    payload: Buffer,
+    signature: string,
+  ): Promise<boolean> {
+    const gateway = await this.registry.getActive();
+    return gateway.verifyWebhookSignature(payload, signature);
   }
 
-  parseWebhookEvent(payload: unknown): WebhookEvent | null {
-    return this.gateway.parseWebhookEvent(payload);
+  async parseWebhookEvent(payload: unknown): Promise<WebhookEvent | null> {
+    const gateway = await this.registry.getActive();
+    return gateway.parseWebhookEvent(payload);
   }
 
   /**
@@ -142,7 +146,8 @@ export class PaymentService {
       }),
     );
 
-    const result = await this.gateway.initializePayment({
+    const gateway = await this.registry.getActive();
+    const result = await gateway.initializePayment({
       transactionId: txn.id,
       orderId,
       email: callerEmail,
@@ -250,7 +255,8 @@ export class PaymentService {
     // Still pending — query Paystack and reconcile.
     let remote: VerifyPaymentResult;
     try {
-      remote = await this.gateway.verifyPayment(reference);
+      const gateway = await this.registry.getActive();
+      remote = await gateway.verifyPayment(reference);
     } catch (err) {
       this.logger.warn(
         `Paystack verify failed for ${reference}; staying pending: ${err}`,

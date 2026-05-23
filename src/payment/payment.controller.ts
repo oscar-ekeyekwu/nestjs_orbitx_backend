@@ -107,7 +107,7 @@ export class PaymentController {
       throw new UnauthorizedException('Missing signature');
     }
 
-    const isValid = this.paymentService.verifyWebhookSignature(
+    const isValid = await this.paymentService.verifyWebhookSignature(
       rawBody,
       signature,
     );
@@ -116,7 +116,7 @@ export class PaymentController {
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    const event = this.paymentService.parseWebhookEvent(req.body);
+    const event = await this.paymentService.parseWebhookEvent(req.body);
     if (!event) return { received: true };
 
     // ARCH-13 — order-bound charge.success: settle the pre-minted

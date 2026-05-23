@@ -78,7 +78,27 @@ export interface CreateTransferResult {
   status: 'success' | 'pending' | 'failed';
 }
 
+export interface TestConnectionResult {
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+/**
+ * PAY-1 — contract every gateway adapter implements. Concrete adapters
+ * (paystack.gateway, flutterwave.gateway, …) translate provider-specific
+ * payloads into these normalized shapes so the rest of the platform
+ * doesn't care which gateway is wired up. New gateways drop in by:
+ *   1. Implementing this interface as a class that accepts credentials
+ *      in its constructor (no ConfigService coupling).
+ *   2. Adding a kind to PaymentProviderKind.
+ *   3. Wiring the kind → adapter mapping in PaymentGatewayRegistry.
+ */
 export interface IPaymentGateway {
+  /** Provider id the registry uses for cache keys + decoupled tracing. */
+  readonly providerId: string;
+  readonly providerSlug: string;
+
   createVirtualAccount(params: {
     userId: string;
     name: string;
@@ -105,4 +125,11 @@ export interface IPaymentGateway {
   verifyWebhookSignature(payload: Buffer, signature: string): boolean;
 
   parseWebhookEvent(payload: unknown): WebhookEvent | null;
+
+  /**
+   * PAY-1 — admin "Test" button. Hits a lightweight gateway endpoint
+   * to confirm the credentials work. Returns latencyMs on success or
+   * a sanitised error message on failure (never echoes the secret).
+   */
+  testConnection(): Promise<TestConnectionResult>;
 }

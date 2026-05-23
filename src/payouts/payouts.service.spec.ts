@@ -23,6 +23,7 @@ import {
 } from '../wallet/entities/transaction.entity';
 import { NAIRA_ZERO, naira } from '../common/money';
 import type { IPaymentGateway } from '../payment/interfaces/payment-gateway.interface';
+import { PaymentGatewayRegistry } from '../payment/payment-gateway.registry';
 
 function buildAdmin(): User {
   return { id: 'admin-1', role: UserRole.ADMIN } as User;
@@ -76,6 +77,13 @@ describe('PayoutsService (G4)', () => {
   let manager: { findOne: jest.Mock; save: jest.Mock; insert: jest.Mock };
   let config: { getNumber: jest.Mock };
   let gateway: jest.Mocked<IPaymentGateway>;
+  let registry: {
+    getActive: jest.Mock;
+    get: jest.Mock;
+    invalidate: jest.Mock;
+    invalidateAll: jest.Mock;
+    cacheSize: jest.Mock;
+  };
   let events: { emit: jest.Mock };
 
   beforeEach(async () => {
@@ -112,12 +120,22 @@ describe('PayoutsService (G4)', () => {
     };
     config = { getNumber: jest.fn().mockResolvedValue(1000) };
     gateway = {
+      providerId: 'provider-test',
+      providerSlug: 'paystack-test',
       createVirtualAccount: jest.fn(),
       initializePayment: jest.fn(),
       verifyPayment: jest.fn(),
       createTransfer: jest.fn(),
       verifyWebhookSignature: jest.fn(),
       parseWebhookEvent: jest.fn(),
+      testConnection: jest.fn(),
+    };
+    registry = {
+      getActive: jest.fn().mockResolvedValue(gateway),
+      get: jest.fn().mockResolvedValue(gateway),
+      invalidate: jest.fn(),
+      invalidateAll: jest.fn(),
+      cacheSize: jest.fn(() => 0),
     };
     events = { emit: jest.fn() };
 
@@ -129,7 +147,7 @@ describe('PayoutsService (G4)', () => {
         { provide: getRepositoryToken(User), useValue: usersRepo },
         { provide: DataSource, useValue: dataSource },
         { provide: SystemConfigService, useValue: config },
-        { provide: 'PAYMENT_GATEWAY', useValue: gateway },
+        { provide: PaymentGatewayRegistry, useValue: registry },
         { provide: EventEmitter2, useValue: events },
       ],
     }).compile();
