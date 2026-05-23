@@ -42,6 +42,12 @@ interface PaystackEnvelope<T> {
 
 interface PaystackCustomer {
   customer_code: string;
+  // Returned by GET /customer/:code|email after a DVA assign completes.
+  // Paystack has surfaced both singular (`dedicated_account`) and
+  // plural (`dedicated_accounts`) shapes in different doc revisions;
+  // we accept either.
+  dedicated_account?: PaystackDedicatedAccount;
+  dedicated_accounts?: PaystackDedicatedAccount[];
 }
 
 interface PaystackDedicatedAccount {
@@ -169,14 +175,40 @@ export class PaystackGateway implements IPaymentGateway {
     const dvaData =
       (await dvaRes.json()) as PaystackEnvelope<PaystackDedicatedAccount>;
 
-    if (!dvaData.status || !dvaData.data) {
+    if (dvaData.status && dvaData.data) {
+      return this.toVirtualAccountResult(dvaData.data);
+    }
+
+    // Paystack's `dedicated_account/assign` is async for some banks
+    // (test-bank in test mode, Wema/Access on first-time provisioning).
+    // A retry hits "Assign dedicated account in progress" because the
+    // previous request is still being processed. Look up the customer
+    // — if a DVA has landed since, return it; otherwise raise a clear
+    // "still provisioning" error the caller can present + retry on.
+    const inProgress = (dvaData.message ?? '')
+      .toLowerCase()
+      .includes('in progress');
+    if (inProgress) {
+      this.logger.warn(
+        `Paystack DVA assign reported in-progress for ${params.email}; falling back to customer lookup.`,
+      );
+      const existing = await this.fetchExistingDedicatedAccount(customerCode);
+      if (existing) {
+        return this.toVirtualAccountResult(existing);
+      }
       throw new Error(
-        `Failed to create virtual account: ${dvaData.message ?? 'Unknown error'}`,
+        'Virtual account is still being provisioned by Paystack. Wait a few seconds and try again.',
       );
     }
 
-    const account = dvaData.data;
+    throw new Error(
+      `Failed to create virtual account: ${dvaData.message ?? 'Unknown error'}`,
+    );
+  }
 
+  private toVirtualAccountResult(
+    account: PaystackDedicatedAccount,
+  ): VirtualAccountResult {
     return {
       accountNumber: account.account_number,
       bankName:
@@ -187,6 +219,36 @@ export class PaystackGateway implements IPaymentGateway {
       providerReference: account.id?.toString() ?? account.account_number,
       provider: 'paystack',
     };
+  }
+
+  /**
+   * GET /customer/:code — used as a fallback when the DVA assign call
+   * returns "in progress". Paystack populates `dedicated_account` (or
+   * the plural variant) on the customer the moment provisioning
+   * completes on their side. Returns null when no account is attached
+   * yet (truly still pending).
+   */
+  private async fetchExistingDedicatedAccount(
+    customerCode: string,
+  ): Promise<PaystackDedicatedAccount | null> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/customer/${encodeURIComponent(customerCode)}`,
+        { headers: { Authorization: `Bearer ${this.secretKey}` } },
+      );
+      const data = (await res.json()) as PaystackEnvelope<PaystackCustomer>;
+      if (!data.status || !data.data) return null;
+      if (data.data.dedicated_account?.account_number) {
+        return data.data.dedicated_account;
+      }
+      const list = data.data.dedicated_accounts ?? [];
+      return list.find((row) => !!row.account_number) ?? null;
+    } catch (err) {
+      this.logger.warn(
+        `Paystack customer lookup failed for ${customerCode}: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   private isTestMode(): boolean {
