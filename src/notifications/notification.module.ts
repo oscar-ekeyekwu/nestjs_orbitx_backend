@@ -16,6 +16,7 @@ import { DeviceTokensService } from './device-tokens.service';
 import { DeviceTokensController } from './device-tokens.controller';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { User } from '../users/entities/user.entity';
+import { DriverProfile } from '../drivers/entities/driver-profile.entity';
 
 @Module({
   imports: [
@@ -26,6 +27,9 @@ import { User } from '../users/entities/user.entity';
       // I6 — incident push subscribers fan out incident.raised to all
       // active admin users.
       User,
+      // order.created push subscriber queries active+online drivers
+      // so dispatches reach everyone whose app is in background.
+      DriverProfile,
     ]),
     RealtimeModule,
   ],

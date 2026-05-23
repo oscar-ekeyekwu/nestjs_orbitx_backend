@@ -67,6 +67,7 @@ describe('OrdersService.reconcileBankTransfer (G3)', () => {
       configService as never,
       {} as never,
       {} as never,
+      { emit: jest.fn() } as never,
       {} as never,
       dataSource as unknown as DataSource,
     );
@@ -164,6 +165,7 @@ describe('OrdersService.getPlatformBankAccount (G3)', () => {
       configService as never,
       {} as never,
       {} as never,
+      { emit: jest.fn() } as never,
       {} as never,
       {} as never,
     );
@@ -206,6 +208,7 @@ describe('OrdersService.listPendingTransfers (G3)', () => {
       { getNumber: jest.fn() } as never,
       {} as never,
       {} as never,
+      { emit: jest.fn() } as never,
       {} as never,
       {} as never,
     );
