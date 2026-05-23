@@ -10,6 +10,7 @@ import {
 } from '@nestjs/websockets';
 
 import { Inject, UseGuards, forwardRef } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { Server } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
@@ -230,6 +231,25 @@ export class RealtimeGateway
       orderId,
       status,
       order,
+    });
+  }
+
+  /**
+   * PAY-1 — wallet-funding nudge. Paystack webhook handler emits
+   * `wallet.funded` after addFunds commits; this listener forwards
+   * the payload to the user's socket room (joined at handshake) so
+   * the mobile wallet screen can refresh balance + transactions
+   * without waiting for a pull-to-refresh.
+   */
+  @OnEvent('wallet.funded')
+  onWalletFunded(event: {
+    userId: string;
+    amountNaira: number;
+    reference: string;
+  }): void {
+    this.emitToUser(event.userId, 'wallet.funded', {
+      amountNaira: event.amountNaira,
+      reference: event.reference,
     });
   }
 

@@ -51,6 +51,15 @@ interface PaystackChargeSuccessPayload {
     amount: number;
     reference: string;
     metadata?: WebhookEventMetadata;
+    customer?: {
+      customer_code?: string;
+      email?: string;
+      metadata?: WebhookEventMetadata;
+    };
+    authorization?: {
+      receiver_bank_account_number?: string;
+      sender_bank_account_number?: string;
+    };
   };
 }
 
@@ -349,10 +358,30 @@ export class PaystackGateway implements IPaymentGateway {
     if (!payload || typeof payload !== 'object') return null;
     const p = payload as PaystackChargeSuccessPayload;
     if (!p.data) return null;
+    // Dedicated virtual-account funding events: Paystack puts the
+    // userId we tagged at customer-create on `customer.metadata.userId`,
+    // not on the charge metadata. Surface it on the normalised
+    // metadata so the webhook handler can resolve the wallet without
+    // a customer-lookup round-trip. The DVA bank account number
+    // (sender / receiver) is also forwarded as a defence-in-depth
+    // attribution hook — see PaymentController.paystackWebhook.
+    const charge = p.data.metadata ?? {};
+    const customerMeta = p.data.customer?.metadata ?? {};
+    const mergedMeta: WebhookEventMetadata = {
+      ...customerMeta,
+      ...charge,
+    };
+    if (p.data.customer?.customer_code) {
+      mergedMeta.customerCode = p.data.customer.customer_code;
+    }
+    if (p.data.authorization?.receiver_bank_account_number) {
+      mergedMeta.receiverAccountNumber =
+        p.data.authorization.receiver_bank_account_number;
+    }
     const base = {
       amount: p.data.amount / 100, // Paystack amounts are in kobo
       reference: p.data.reference,
-      metadata: p.data.metadata,
+      metadata: mergedMeta,
     };
     if (p.event === 'charge.success') {
       return {
