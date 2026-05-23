@@ -48,6 +48,7 @@ import { User } from '../users/entities/user.entity';
 import Decimal from 'decimal.js';
 import { Naira, naira } from '../common/money';
 import { haversineKm } from '../common/geo';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 @Injectable()
 export class OrdersService {
@@ -63,6 +64,7 @@ export class OrdersService {
     // forms a cycle; the module import is also forwardRef'd in orders.module.ts.
     @Inject(forwardRef(() => NotificationsService))
     private notifications: NotificationsService,
+    private readonly eventEmitter: EventEmitter2,
     // E4 — receipts pipeline. Best-effort fire on DELIVERED; failures
     // are logged but never roll back the status transition.
     private readonly receipts: ReceiptsService,
@@ -221,6 +223,18 @@ export class OrdersService {
         ),
       );
     }
+
+    // Push fanout to eligible drivers. Socket broadcasts only reach
+    // drivers whose app is foregrounded + connected; push reaches
+    // everyone who's marked themselves online. Post-commit, fire-and-
+    // forget — handler is in PushFanoutEventSubscribers.
+    this.eventEmitter.emit('order.created', {
+      orderId: savedOrder.id,
+      packageSize: savedOrder.packageSize,
+      pickupAddress: savedOrder.pickupAddress,
+      deliveryAddress: savedOrder.deliveryAddress,
+      estimatedPriceNaira: Number(savedOrder.estimatedPrice),
+    });
 
     return savedOrder;
   }

@@ -11,6 +11,10 @@ import type {
 import { DocumentOwnerType } from '../documents/entities/document.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../common/enums/user-role.enum';
+import {
+  DriverProfile,
+  DriverVerificationStatus,
+} from '../drivers/entities/driver-profile.entity';
 
 // I6 — payload shape published by IncidentsService.
 export interface IncidentRaisedEvent {
@@ -55,6 +59,18 @@ export interface WalletFundedEvent {
   reference: string;
 }
 
+// Order-created event emitted post-commit by OrdersService. The push
+// subscriber fans out a "new delivery available" notification to
+// every active+online driver so they don't have to keep the app
+// foregrounded to see new work.
+export interface OrderCreatedEvent {
+  orderId: string;
+  packageSize: string;
+  pickupAddress: string;
+  deliveryAddress: string;
+  estimatedPriceNaira: number;
+}
+
 /**
  * ARCH-10 — event-to-push subscriber. Lives in NotificationsModule so
  * the routing logic is colocated with the channel. Each handler keeps
@@ -73,6 +89,8 @@ export class PushFanoutEventSubscribers {
     private readonly fanout: PushFanoutService,
     @InjectRepository(User)
     private readonly users: Repository<User>,
+    @InjectRepository(DriverProfile)
+    private readonly driverProfiles: Repository<DriverProfile>,
   ) {}
 
   // ────────────────────────────────── C4 expiry cron events
@@ -174,6 +192,49 @@ export class PushFanoutEventSubscribers {
       },
       data: { kind: 'driver.rejected' },
     });
+  }
+
+  // ────────────────────────────────── Order broadcast events
+  @OnEvent('order.created')
+  async onOrderCreated(event: OrderCreatedEvent): Promise<void> {
+    // Find every driver who's marked themselves online + verification
+    // is active. Socket broadcasts only reach drivers with the app
+    // foregrounded; push closes that gap. The current driver-side
+    // check on the mobile filters orders out by radius / busy state,
+    // so an over-broad notification fanout is preferable to a
+    // narrow miss.
+    const drivers = await this.driverProfiles.find({
+      where: {
+        isOnline: true,
+        verificationStatus: DriverVerificationStatus.ACTIVE,
+        isOnDelivery: false,
+      },
+      select: ['userId'],
+    });
+    if (drivers.length === 0) {
+      this.logger.warn(
+        `order.created ${event.orderId} but no active+online drivers to notify.`,
+      );
+      return;
+    }
+    const priceText = `₦${Number(event.estimatedPriceNaira).toLocaleString(
+      'en-NG',
+      { minimumFractionDigits: 0, maximumFractionDigits: 0 },
+    )}`;
+    const payload = {
+      notification: {
+        title: 'New delivery available',
+        body: `${priceText} · ${truncateAddress(event.pickupAddress)} → ${truncateAddress(event.deliveryAddress)}`,
+      },
+      data: {
+        kind: 'order.created',
+        orderId: event.orderId,
+        packageSize: event.packageSize,
+      },
+    };
+    for (const driver of drivers) {
+      void this.fanout.send(driver.userId, payload);
+    }
   }
 
   // ────────────────────────────────── Wallet funding events
@@ -288,4 +349,11 @@ function humanizeDocType(type: string): string {
     default:
       return type.replace(/_/g, ' ');
   }
+}
+
+function truncateAddress(address: string): string {
+  if (!address) return '';
+  // FCM body has a 240-char practical limit; keep each leg short so
+  // both pickup + dropoff fit alongside the price prefix.
+  return address.length > 32 ? `${address.slice(0, 30)}…` : address;
 }

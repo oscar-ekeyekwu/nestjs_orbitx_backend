@@ -107,6 +107,7 @@ describe('OrdersService.markCashCollected (G2)', () => {
       configService as never,
       {} as never,
       {} as never,
+      { emit: jest.fn() } as never,
       {} as never,
       dataSource as unknown as DataSource,
     );
