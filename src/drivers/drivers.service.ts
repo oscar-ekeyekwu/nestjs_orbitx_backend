@@ -143,14 +143,26 @@ export class DriversService {
       profile.verificationStatus = dto.status;
       // Suspension / rejection takes the driver offline immediately —
       // can't keep dispatching to someone who just lost their license.
-      if (
+      const isSuspending =
         dto.status === DriverVerificationStatus.SUSPENDED_ADMIN ||
         dto.status === DriverVerificationStatus.SUSPENDED_DOCS_EXPIRED ||
-        dto.status === DriverVerificationStatus.REJECTED
-      ) {
+        dto.status === DriverVerificationStatus.REJECTED;
+      if (isSuspending) {
         profile.isOnline = false;
       }
       await manager.save(profile);
+
+      if (isSuspending) {
+        // Mirror updateOnlineStatus — push the new isOnline=false to
+        // the driver's mobile socket so the home toggle flips in
+        // real time instead of waiting for a force-quit + cold-start
+        // re-hydrate.
+        this.events.emit('driver.status', {
+          userId: profile.userId,
+          isOnline: profile.isOnline,
+          isOnDelivery: profile.isOnDelivery,
+        });
+      }
 
       await this.approvalsService.recordDecision(manager, {
         targetType: ApprovalTargetType.DRIVER,
@@ -296,9 +308,7 @@ export class DriversService {
    * Internal callers should still use findByUserId — they don't need
    * the join and the extra query would just be ballast.
    */
-  async findByUserIdWithVehicle(
-    userId: string,
-  ): Promise<DriverProfile | null> {
+  async findByUserIdWithVehicle(userId: string): Promise<DriverProfile | null> {
     const profile = await this.findByUserId(userId);
     if (!profile) return profile;
     const vehicle = await this.findDriverVehicle(profile);
@@ -424,6 +434,17 @@ export class DriversService {
     // any throw inside is swallowed so socket bookkeeping can't 500
     // the HTTP handler.
     this.syncEligibleRooms(userId, isOnline, vehicleForRooms);
+
+    // Decoupled via EventEmitter2 (wallet.funded precedent) so this
+    // module never imports RealtimeGateway directly. The gateway's
+    // @OnEvent('driver.status') listener forwards to the driver's
+    // socket. Lets the mobile UI reconcile across multi-device,
+    // admin force-offline, and doc-expiry suspension without polling.
+    this.events.emit('driver.status', {
+      userId,
+      isOnline: saved.isOnline,
+      isOnDelivery: saved.isOnDelivery,
+    });
 
     return saved;
   }

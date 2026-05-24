@@ -12,10 +12,7 @@ import {
   DocumentOwnerType,
   DocumentStatus,
 } from './entities/document.entity';
-import {
-  Vehicle,
-  VehicleOwnerType,
-} from '../vehicles/entities/vehicle.entity';
+import { Vehicle, VehicleOwnerType } from '../vehicles/entities/vehicle.entity';
 import { VehicleAssignment } from '../vehicles/entities/vehicle-assignment.entity';
 import { Company } from '../companies/entities/company.entity';
 import {
@@ -196,6 +193,14 @@ export class DocumentsService {
       // shouldn't see this driver until an admin re-approves.
       profile.isOnline = false;
       await this.driverProfileRepo.save(profile);
+      // Push the new state to the driver's socket so the mobile home
+      // toggle flips immediately. Without this the driver keeps seeing
+      // "Online" until they cold-start the app.
+      this.events.emit('driver.status', {
+        userId: profile.userId,
+        isOnline: profile.isOnline,
+        isOnDelivery: profile.isOnDelivery,
+      });
       // Audit trail: record why the driver fell out of active so the
       // admin can trace it later. NDPA / LASAA event log requirements.
       await this.approvalsService.recordDecision(this.dataSource.manager, {
@@ -557,6 +562,9 @@ export class DocumentsService {
       return;
     }
 
-    throw new ForbiddenException(`Unsupported ownerType: ${ownerType}`);
+    // Exhaustive — the three branches above cover every DocumentOwnerType,
+    // so `ownerType` narrows to `never` here. Coerce explicitly for the
+    // template literal (lint: restrict-template-expressions).
+    throw new ForbiddenException(`Unsupported ownerType: ${String(ownerType)}`);
   }
 }
