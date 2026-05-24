@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
@@ -52,6 +53,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @InjectRepository(Order)
     private ordersRepository: Repository<Order>,
@@ -191,6 +194,17 @@ export class OrdersService {
     });
 
     const savedOrder = await this.ordersRepository.save(order);
+
+    // Single observable line that ties order id → broadcast inputs.
+    // Pair this with the realtime gateway's `order_offered → room=…
+    // sockets=…` log and the push-fanout `order.created … fanning out
+    // push to N driver(s)` log to debug "driver got nothing".
+    this.logger.log(
+      `Order created id=${savedOrder.id} packageSize=${savedOrder.packageSize} ` +
+        `paymentStatus=${savedOrder.paymentStatus} eligibleAtBroadcast=${
+          eligibleAtBroadcast ?? 'n/a'
+        }`,
+    );
 
     // ARCH-12 — narrow the broadcast to the eligible-drivers room
     // keyed on packageSize so a motorcycle driver isn't woken up for

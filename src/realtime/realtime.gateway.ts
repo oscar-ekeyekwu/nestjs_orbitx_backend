@@ -9,7 +9,7 @@ import {
   WsException,
 } from '@nestjs/websockets';
 
-import { Inject, UseGuards, forwardRef } from '@nestjs/common';
+import { Inject, Logger, UseGuards, forwardRef } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Server } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
@@ -29,6 +29,8 @@ export class RealtimeGateway
 {
   @WebSocketServer()
   server: Server;
+
+  private readonly logger = new Logger(RealtimeGateway.name);
 
   /**
    * Tracks connected users and their socket IDs.
@@ -350,6 +352,20 @@ export class RealtimeGateway
       order,
       timestamp: new Date().toISOString(),
     });
+    // Best-effort visibility into how many sockets actually got the
+    // broadcast. If this is 0 every time, the driver mobile never
+    // joined the room — most often because the socket connected
+    // before the driver flipped isOnline=true, or the driver's
+    // vehicle type doesn't cover this packageSize.
+    void this.server
+      .in(room)
+      .fetchSockets()
+      .then((sockets) => {
+        this.logger.log(
+          `order_offered → room=${room} sockets=${sockets.length}`,
+        );
+      })
+      .catch(() => undefined);
     return room;
   }
 

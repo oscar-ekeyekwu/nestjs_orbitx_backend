@@ -2,6 +2,7 @@
  * jest mock introspection is noisy under strict type-checked lint. */
 import { Repository } from 'typeorm';
 import {
+  ExpoPushLike,
   FirebaseMessagingLike,
   PushFanoutService,
   type PushPayload,
@@ -164,5 +165,94 @@ describe('PushFanoutService (ARCH-10)', () => {
     ).resolves.toBeUndefined();
     // Should not have tried to call any messaging method.
     expect(messaging.sendEachForMulticast).not.toHaveBeenCalled();
+  });
+
+  describe('Expo push path (J5)', () => {
+    let expoMock: jest.Mocked<ExpoPushLike>;
+    let dualService: PushFanoutService;
+
+    beforeEach(() => {
+      expoMock = {
+        chunkPushNotifications: jest.fn((msgs) => [msgs]),
+        sendPushNotificationsAsync: jest.fn(),
+      } as unknown as jest.Mocked<ExpoPushLike>;
+      dualService = new PushFanoutService(repo, messaging, expoMock);
+    });
+
+    it('routes ExponentPushToken[...] tokens through the Expo SDK, not FCM', async () => {
+      repo.find.mockResolvedValue([
+        buildToken({ id: 't-expo', token: 'ExponentPushToken[abc123]' }),
+      ]);
+      expoMock.sendPushNotificationsAsync.mockResolvedValue([
+        { status: 'ok', id: 'ticket-1' } as never,
+      ]);
+
+      await dualService.send('user-1', PAYLOAD);
+
+      expect(expoMock.sendPushNotificationsAsync).toHaveBeenCalledWith([
+        expect.objectContaining({
+          to: 'ExponentPushToken[abc123]',
+          title: PAYLOAD.notification.title,
+          body: PAYLOAD.notification.body,
+          data: PAYLOAD.data,
+        }),
+      ]);
+      expect(messaging.sendEachForMulticast).not.toHaveBeenCalled();
+    });
+
+    it('partitions: ExponentPushToken via Expo, raw token via FCM, in parallel', async () => {
+      repo.find.mockResolvedValue([
+        buildToken({ id: 't-expo', token: 'ExponentPushToken[xyz]' }),
+        buildToken({ id: 't-fcm', token: 'raw-fcm-token' }),
+      ]);
+      expoMock.sendPushNotificationsAsync.mockResolvedValue([
+        { status: 'ok', id: 'ticket-1' } as never,
+      ]);
+      messaging.sendEachForMulticast.mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        responses: [{ success: true }],
+      } as never);
+
+      await dualService.send('user-1', PAYLOAD);
+
+      expect(expoMock.sendPushNotificationsAsync).toHaveBeenCalledTimes(1);
+      expect(messaging.sendEachForMulticast).toHaveBeenCalledWith(
+        expect.objectContaining({ tokens: ['raw-fcm-token'] }),
+      );
+    });
+
+    it('DeviceNotRegistered Expo ticket deactivates that token only', async () => {
+      repo.find.mockResolvedValue([
+        buildToken({ id: 't-good', token: 'ExponentPushToken[ok]' }),
+        buildToken({ id: 't-dead', token: 'ExponentPushToken[stale]' }),
+      ]);
+      expoMock.sendPushNotificationsAsync.mockResolvedValue([
+        { status: 'ok', id: 'tic-1' } as never,
+        {
+          status: 'error',
+          message: 'unregistered',
+          details: { error: 'DeviceNotRegistered' },
+        } as never,
+      ]);
+
+      await dualService.send('user-1', PAYLOAD);
+
+      expect(repo.update).toHaveBeenCalledWith(['t-dead'], { isActive: false });
+    });
+
+    it('Expo SDK throws → swallows, never propagates', async () => {
+      repo.find.mockResolvedValue([
+        buildToken({ id: 't-1', token: 'ExponentPushToken[abc]' }),
+      ]);
+      expoMock.sendPushNotificationsAsync.mockRejectedValue(
+        new Error('expo down'),
+      );
+
+      await expect(
+        dualService.send('user-1', PAYLOAD),
+      ).resolves.toBeUndefined();
+      expect(repo.update).not.toHaveBeenCalled();
+    });
   });
 });

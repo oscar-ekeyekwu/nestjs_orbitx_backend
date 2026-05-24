@@ -55,6 +55,7 @@
     "class-validator": "^0.14.2",
     "decimal.js": "^10.6.0",
     "dotenv": "^16.4.5",
+    "expo-server-sdk": "^6.1.0",
     "firebase-admin": "^13.6.0",
     "handlebars": "^4.7.8",
     "multer": "^2.0.2",
