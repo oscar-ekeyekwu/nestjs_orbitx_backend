@@ -212,11 +212,25 @@ export class PushFanoutEventSubscribers {
       select: ['userId'],
     });
     if (drivers.length === 0) {
+      // Self-debug aid: also count online drivers without the
+      // isOnDelivery gate so the operator can tell whether the filter
+      // is the killer or there genuinely are no online drivers.
+      const onlineCount = await this.driverProfiles.count({
+        where: {
+          isOnline: true,
+          verificationStatus: DriverVerificationStatus.ACTIVE,
+        },
+      });
       this.logger.warn(
-        `order.created ${event.orderId} but no active+online drivers to notify.`,
+        `order.created ${event.orderId} packageSize=${event.packageSize} — no eligible drivers ` +
+          `(isOnline+ACTIVE+!isOnDelivery). isOnline+ACTIVE without the isOnDelivery gate: ${onlineCount}. ` +
+          `Check driver_profiles.isOnline / verificationStatus / isOnDelivery.`,
       );
       return;
     }
+    this.logger.log(
+      `order.created ${event.orderId} packageSize=${event.packageSize} → fanning out push to ${drivers.length} eligible driver(s).`,
+    );
     const priceText = `₦${Number(event.estimatedPriceNaira).toLocaleString(
       'en-NG',
       { minimumFractionDigits: 0, maximumFractionDigits: 0 },

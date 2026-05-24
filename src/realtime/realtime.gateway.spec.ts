@@ -121,7 +121,15 @@ describe('RealtimeGateway (ARCH-12 room semantics)', () => {
     it('emits order_offered to the room keyed by packageSize', () => {
       const emit = jest.fn();
       const to = jest.fn().mockReturnValue({ emit });
-      const server = { to, emit: jest.fn(), sockets: { sockets: new Map() } };
+      const inFn = jest
+        .fn()
+        .mockReturnValue({ fetchSockets: jest.fn().mockResolvedValue([]) });
+      const server = {
+        to,
+        in: inFn,
+        emit: jest.fn(),
+        sockets: { sockets: new Map() },
+      };
       const gateway = new RealtimeGateway(
         null as never,
         null as never,
@@ -143,7 +151,15 @@ describe('RealtimeGateway (ARCH-12 room semantics)', () => {
     it('emits order_taken to the same room with the orderId', () => {
       const emit = jest.fn();
       const to = jest.fn().mockReturnValue({ emit });
-      const server = { to, emit: jest.fn(), sockets: { sockets: new Map() } };
+      const inFn = jest
+        .fn()
+        .mockReturnValue({ fetchSockets: jest.fn().mockResolvedValue([]) });
+      const server = {
+        to,
+        in: inFn,
+        emit: jest.fn(),
+        sockets: { sockets: new Map() },
+      };
       const gateway = new RealtimeGateway(
         null as never,
         null as never,

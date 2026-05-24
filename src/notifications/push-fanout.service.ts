@@ -65,7 +65,16 @@ export class PushFanoutService {
     const tokens = await this.deviceTokenRepo.find({
       where: { userId, isActive: true },
     });
-    if (tokens.length === 0) return;
+    if (tokens.length === 0) {
+      // Was silent — re-surfaces as a log so order-broadcast misses
+      // become diagnosable. Most common cause: driver mobile never
+      // POSTed to /device-tokens after install (APK side-loads skip
+      // the registration step in some Expo dev-client builds).
+      this.logger.warn(
+        `Push fanout skipped — user=${userId} has zero active device tokens. Title="${payload.notification.title}".`,
+      );
+      return;
+    }
 
     const messaging = this.resolveMessaging();
     if (!messaging) {
@@ -74,6 +83,9 @@ export class PushFanoutService {
       );
       return;
     }
+    this.logger.log(
+      `Push fanout → user=${userId} tokens=${tokens.length} title="${payload.notification.title}".`,
+    );
 
     const start = Date.now();
     let response: admin.messaging.BatchResponse;
