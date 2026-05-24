@@ -1,7 +1,9 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { SystemConfigService } from '../config/config.service';
 import { ConfigKey } from '../config/enums/config-keys.enum';
 import { ErrorCodes } from './constants/error-codes';
+
+const geoLogger = new Logger('GeoZoneCheck');
 
 /**
  * Inclusive bounding box. Matches the JSON shape stored under
@@ -76,9 +78,18 @@ export async function assertInsideLagos(
     DEFAULT_LAGOS_BBOX,
   );
   if (!isInsideLagos(lat, lng, bbox)) {
+    // Surface the coords + zone in the log so an admin can tell at a
+    // glance whether the caller tested from outside Lagos vs the
+    // bbox itself is misconfigured. The response message stays
+    // customer-friendly per NFR-S3.
+    geoLogger.warn(
+      `ZONE_001 — point (${lat}, ${lng}) outside service zone ` +
+        `[lat ${bbox.latMin}..${bbox.latMax}, lng ${bbox.lngMin}..${bbox.lngMax}]. ` +
+        `Widen system_configs.${ConfigKey.LAGOS_SERVICE_BBOX} if this should be allowed.`,
+    );
     throw new BadRequestException({
       errorCode: ErrorCodes.ZONE_001,
-      message: 'You are outside our operating zone.',
+      message: `Pickup or drop-off is outside our operating zone (${lat.toFixed(4)}, ${lng.toFixed(4)}).`,
     });
   }
 }
@@ -114,10 +125,14 @@ export function isInsideNigeria(lat: number, lng: number): boolean {
  */
 export function assertInsideNigeria(lat: number, lng: number): void {
   if (!isInsideNigeria(lat, lng)) {
+    geoLogger.warn(
+      `GEO_001 — point (${lat}, ${lng}) outside Nigeria bbox ` +
+        `[lat ${NIGERIA_BBOX.latMin}..${NIGERIA_BBOX.latMax}, ` +
+        `lng ${NIGERIA_BBOX.lngMin}..${NIGERIA_BBOX.lngMax}].`,
+    );
     throw new BadRequestException({
       errorCode: ErrorCodes.GEO_001,
-      message:
-        'Coordinates fall outside our operating region. Verify GPS is on and accurate.',
+      message: `Coordinates (${lat.toFixed(4)}, ${lng.toFixed(4)}) fall outside our operating region. Verify GPS is on and accurate.`,
     });
   }
 }
