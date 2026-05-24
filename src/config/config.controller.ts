@@ -11,7 +11,13 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { IsNumber, IsOptional } from 'class-validator';
+import {
+  IsEmail,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { SystemConfigService } from './config.service';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -19,6 +25,42 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { ConfigKey } from './enums/config-keys.enum';
+
+interface SupportContactInfo {
+  phone: string;
+  email: string;
+  whatsapp: string;
+  hours: string;
+}
+
+const SUPPORT_INFO_DEFAULTS: SupportContactInfo = {
+  phone: '',
+  email: '',
+  whatsapp: '',
+  hours: '',
+};
+
+class UpdateSupportInfoDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @IsOptional()
+  @IsEmail({}, { message: 'email must be a valid email address' })
+  @MaxLength(120)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  whatsapp?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  hours?: string;
+}
 
 class UpdateDriverSettingsDto {
   @IsOptional()
@@ -200,6 +242,42 @@ export class ConfigController {
       ]);
 
     return { driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct };
+  }
+
+  @Get('support-info')
+  @ApiOperation({
+    summary:
+      'Get public support contact info shown in the mobile apps. Any authenticated user can read; only Admins can update.',
+  })
+  async getSupportInfo(): Promise<SupportContactInfo> {
+    const stored = await this.configService.get<Partial<SupportContactInfo>>(
+      ConfigKey.SUPPORT_CONTACT_INFO,
+      SUPPORT_INFO_DEFAULTS,
+    );
+    // Defensive merge: a partial value (e.g. from a hand-edited row that
+    // dropped a field) still resolves to a complete shape for callers.
+    return { ...SUPPORT_INFO_DEFAULTS, ...(stored ?? {}) };
+  }
+
+  @Put('support-info')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Update support contact info (Admin only)' })
+  async updateSupportInfo(
+    @Body() dto: UpdateSupportInfoDto,
+  ): Promise<SupportContactInfo> {
+    const current = await this.getSupportInfo();
+    const next: SupportContactInfo = {
+      phone: dto.phone ?? current.phone,
+      email: dto.email ?? current.email,
+      whatsapp: dto.whatsapp ?? current.whatsapp,
+      hours: dto.hours ?? current.hours,
+    };
+    await this.configService.update(ConfigKey.SUPPORT_CONTACT_INFO, {
+      key: ConfigKey.SUPPORT_CONTACT_INFO,
+      value: JSON.stringify(next),
+      dataType: 'json',
+    });
+    return next;
   }
 
   @Get(':key')

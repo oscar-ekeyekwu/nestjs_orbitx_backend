@@ -38,6 +38,11 @@ export enum ConfigKey {
   // included in the weekly payout cron. Below the threshold the row
   // is skipped — the balance rolls over to the next week.
   MIN_PAYOUT_THRESHOLD = 'MIN_PAYOUT_THRESHOLD',
+
+  // Public-facing support contact info shown in the customer and driver
+  // apps. Stored as JSON `{ phone, email, whatsapp, hours }` so the
+  // admin can update without a deploy. Mirrors PLATFORM_BANK_ACCOUNT.
+  SUPPORT_CONTACT_INFO = 'SUPPORT_CONTACT_INFO',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -139,5 +144,16 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'Minimum wallet balance (in Naira) a recipient must hit to be included in the weekly payout cron (G4). Balances below the threshold roll over.',
     dataType: 'number',
+  },
+  [ConfigKey.SUPPORT_CONTACT_INFO]: {
+    value: JSON.stringify({
+      phone: '+2348012345678',
+      email: 'support@orbitx-dispatch.com',
+      whatsapp: '2348012345678',
+      hours: 'Mon–Fri 8AM–8PM · Sat–Sun 9AM–5PM',
+    }),
+    description:
+      'Public support contact info shown in the mobile apps (driver Support page and customer Contact Us). JSON shape: { phone, email, whatsapp, hours }. Admins update via Settings → Support Info.',
+    dataType: 'json',
   },
 };

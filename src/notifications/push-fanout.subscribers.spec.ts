@@ -11,6 +11,7 @@ import type { User } from '../users/entities/user.entity';
 describe('PushFanoutEventSubscribers (ARCH-10)', () => {
   let fanout: jest.Mocked<PushFanoutService>;
   let users: jest.Mocked<Repository<User>>;
+  let driverProfiles: { find: jest.Mock };
   let subs: PushFanoutEventSubscribers;
 
   beforeEach(() => {
@@ -21,7 +22,13 @@ describe('PushFanoutEventSubscribers (ARCH-10)', () => {
     users = {
       find: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<Repository<User>>;
-    subs = new PushFanoutEventSubscribers(fanout, users);
+    // order.created fans out to active+online drivers via this repo.
+    driverProfiles = { find: jest.fn().mockResolvedValue([]) };
+    subs = new PushFanoutEventSubscribers(
+      fanout,
+      users,
+      driverProfiles as never,
+    );
   });
 
   describe('document.expiring_soon', () => {

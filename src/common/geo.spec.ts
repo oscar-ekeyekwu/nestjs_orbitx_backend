@@ -107,7 +107,10 @@ describe('geo (ARCH-5)', () => {
         message: string;
       };
       expect(response.errorCode).toBe(ErrorCodes.ZONE_001);
-      expect(response.message).toBe('You are outside our operating zone.');
+      // Message now includes the failed coords so the customer mobile
+      // can surface them in the error toast.
+      expect(response.message).toContain('outside our operating zone');
+      expect(response.message).toContain('9.0765');
     });
 
     it('picks up a different bbox if the config service returns one (admin-tunable)', async () => {
