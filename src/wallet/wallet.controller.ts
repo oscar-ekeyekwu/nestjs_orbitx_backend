@@ -7,7 +7,11 @@ import {
   Query,
   UseGuards,
   ParseIntPipe,
+  ForbiddenException,
+  NotFoundException,
+  Logger,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ApiTags,
   ApiOperation,
@@ -17,6 +21,8 @@ import {
 import { WalletService } from './wallet.service';
 import { AddFundsDto } from './dto/add-funds.dto';
 import { WithdrawFundsDto } from './dto/withdraw-funds.dto';
+import { TestFundByAccountDto } from './dto/test-fund-by-account.dto';
+import { PaymentMethod } from './entities/transaction.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -29,7 +35,12 @@ import { UserRole } from '../common/enums/user-role.enum';
 @Controller('wallet')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class WalletController {
-  constructor(private readonly walletService: WalletService) {}
+  private readonly logger = new Logger(WalletController.name);
+
+  constructor(
+    private readonly walletService: WalletService,
+    private readonly events: EventEmitter2,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get user wallet' })
@@ -124,5 +135,62 @@ export class WalletController {
   @ApiOperation({ summary: 'Unlock user wallet (Admin only)' })
   async unlockWallet(@Param('userId') userId: string) {
     return this.walletService.unlockWallet(userId);
+  }
+
+  // Test-only — rehearses the Paystack DVA funding flow without the
+  // gateway in the loop. Reuses the exact same wallet credit path the
+  // webhook uses (findUserIdByVirtualAccountNumber + addFunds) and
+  // emits `wallet.funded` so push + socket fan-out fires identically.
+  // Hard-gated to non-production + admin role; refuses to run in prod
+  // even if an admin token leaks.
+  @Post('test/fund-by-account')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary:
+      'TEST ONLY — credit a wallet by virtual account number (non-prod, admin).',
+  })
+  async testFundByAccount(@Body() dto: TestFundByAccountDto) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException(
+        'Test funding endpoint is disabled in production.',
+      );
+    }
+
+    const userId = await this.walletService.findUserIdByVirtualAccountNumber(
+      dto.accountNumber,
+    );
+    if (!userId) {
+      throw new NotFoundException(
+        `No virtual account found for ${dto.accountNumber}.`,
+      );
+    }
+
+    const reference = `test-fund-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+
+    const transaction = await this.walletService.addFunds(userId, {
+      amount: dto.amount,
+      paymentMethod: PaymentMethod.BANK_TRANSFER,
+      reference,
+      description: 'TEST — virtual account funding (manual)',
+    });
+
+    this.events.emit('wallet.funded', {
+      userId,
+      amountNaira: dto.amount,
+      reference,
+    });
+
+    this.logger.warn(
+      `TEST funded wallet for user ${userId} via account ${dto.accountNumber}: ₦${dto.amount} (ref=${reference})`,
+    );
+
+    return {
+      userId,
+      reference,
+      amountNaira: dto.amount,
+      transactionId: transaction.id,
+    };
   }
 }
