@@ -253,6 +253,25 @@ export class RealtimeGateway
     });
   }
 
+  /**
+   * Driver online-state reconcile. Emitted by any backend path that
+   * flips driver_profiles.isOnline — the driver's own toggle, admin
+   * suspension, or doc-expiry re-review. Forwarded to the driver's
+   * socket so the mobile UI updates in real time without polling.
+   * Mobile listener (useSocketEvents) calls driverStore.hydrateStatus.
+   */
+  @OnEvent('driver.status')
+  onDriverStatus(event: {
+    userId: string;
+    isOnline: boolean;
+    isOnDelivery: boolean;
+  }): void {
+    this.emitToUser(event.userId, 'driver.status', {
+      isOnline: event.isOnline,
+      isOnDelivery: event.isOnDelivery,
+    });
+  }
+
   emitNewOrderToDrivers(order: object): void {
     this.server.emit('new_order_available', {
       order,
