@@ -28,6 +28,7 @@ describe('OrdersService.findOneScoped (E2 — auth gate)', () => {
       {} as never,
       {} as never,
       {} as never,
+      { emit: jest.fn() } as never,
       {} as never,
       {} as never,
     );
@@ -98,6 +99,7 @@ describe('OrdersService.findOneScoped (E2 — auth gate)', () => {
       {} as never,
       {} as never,
       {} as never,
+      { emit: jest.fn() } as never,
       {} as never,
       {} as never,
     );
