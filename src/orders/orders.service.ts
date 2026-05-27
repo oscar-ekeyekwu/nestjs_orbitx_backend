@@ -259,6 +259,47 @@ export class OrdersService {
     return savedOrder;
   }
 
+  /**
+   * Pricing-only path used by the customer create-order screen to
+   * show a live, distance-aware estimate as the user fills the form.
+   * Reuses the same calculatePrice + calculateInsuranceFee helpers as
+   * `create()` so the mobile preview can't drift from the persisted
+   * value. Returns string-serialized Naira fields (matching the wire
+   * format every other money-bearing response uses) plus the raw
+   * great-circle distance for the UI.
+   */
+  async estimate(input: {
+    pickupLatitude: number;
+    pickupLongitude: number;
+    deliveryLatitude: number;
+    deliveryLongitude: number;
+    packageSize: PackageSize;
+  }): Promise<{
+    estimatedPrice: string;
+    insuranceFee: string | null;
+    distanceKm: string;
+  }> {
+    const distance = this.calculateDistance(
+      input.pickupLatitude,
+      input.pickupLongitude,
+      input.deliveryLatitude,
+      input.deliveryLongitude,
+    );
+    const estimatedPrice = await this.calculatePrice(
+      input.pickupLatitude,
+      input.pickupLongitude,
+      input.deliveryLatitude,
+      input.deliveryLongitude,
+      input.packageSize,
+    );
+    const insuranceFee = await this.calculateInsuranceFee(estimatedPrice);
+    return {
+      estimatedPrice: estimatedPrice.toString(),
+      insuranceFee: insuranceFee ? insuranceFee.toString() : null,
+      distanceKm: distance.toFixed(2),
+    };
+  }
+
   async findAll(
     userId: string,
     userRole: UserRole,
