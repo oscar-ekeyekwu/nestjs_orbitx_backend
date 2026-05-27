@@ -101,6 +101,19 @@ class UpdatePricingSettingsDto {
   @IsOptional()
   @IsNumber()
   largePackageMultiplier?: number;
+
+  /**
+   * Insurance fee debited to the rider per completed delivery. Two
+   * knobs; percent takes precedence when > 0, otherwise fixed
+   * applies. Both 0 = insurance disabled (default).
+   */
+  @IsOptional()
+  @IsNumber()
+  insuranceFeeFixed?: number;
+
+  @IsOptional()
+  @IsNumber()
+  insuranceFeePercent?: number;
 }
 
 @ApiTags('Configuration')
@@ -143,6 +156,8 @@ export class ConfigController {
       smallPackageMultiplier,
       mediumPackageMultiplier,
       largePackageMultiplier,
+      insuranceFeeFixed,
+      insuranceFeePercent,
     ] = await Promise.all([
       this.configService.getNumber(ConfigKey.ORDER_BASE_PRICE, 1000),
       this.configService.getNumber(ConfigKey.ORDER_PRICE_PER_KM, 100),
@@ -152,6 +167,8 @@ export class ConfigController {
         1.5,
       ),
       this.configService.getNumber(ConfigKey.PACKAGE_SIZE_LARGE_MULTIPLIER, 2),
+      this.configService.getNumber(ConfigKey.ORDER_INSURANCE_FEE_FIXED, 0),
+      this.configService.getNumber(ConfigKey.ORDER_INSURANCE_FEE_PERCENT, 0),
     ]);
     return {
       baseFare,
@@ -159,6 +176,8 @@ export class ConfigController {
       smallPackageMultiplier,
       mediumPackageMultiplier,
       largePackageMultiplier,
+      insuranceFeeFixed,
+      insuranceFeePercent,
     };
   }
 
@@ -166,12 +185,28 @@ export class ConfigController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update pricing settings (Admin only)' })
   async updatePricingSettings(@Body() dto: UpdatePricingSettingsDto) {
+    if (
+      dto.insuranceFeePercent !== undefined &&
+      (dto.insuranceFeePercent < 0 || dto.insuranceFeePercent > 100)
+    ) {
+      throw new BadRequestException(
+        'insuranceFeePercent must be between 0 and 100.',
+      );
+    }
+    if (dto.insuranceFeeFixed !== undefined && dto.insuranceFeeFixed < 0) {
+      throw new BadRequestException(
+        'insuranceFeeFixed must be 0 or greater.',
+      );
+    }
+
     const fieldToKey: Array<[keyof UpdatePricingSettingsDto, ConfigKey]> = [
       ['baseFare', ConfigKey.ORDER_BASE_PRICE],
       ['perKmRate', ConfigKey.ORDER_PRICE_PER_KM],
       ['smallPackageMultiplier', ConfigKey.PACKAGE_SIZE_SMALL_MULTIPLIER],
       ['mediumPackageMultiplier', ConfigKey.PACKAGE_SIZE_MEDIUM_MULTIPLIER],
       ['largePackageMultiplier', ConfigKey.PACKAGE_SIZE_LARGE_MULTIPLIER],
+      ['insuranceFeeFixed', ConfigKey.ORDER_INSURANCE_FEE_FIXED],
+      ['insuranceFeePercent', ConfigKey.ORDER_INSURANCE_FEE_PERCENT],
     ];
 
     const updates = fieldToKey

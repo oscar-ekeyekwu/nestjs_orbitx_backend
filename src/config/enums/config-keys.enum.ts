@@ -8,6 +8,16 @@ export enum ConfigKey {
   ORDER_BASE_PRICE = 'ORDER_BASE_PRICE',
   ORDER_PRICE_PER_KM = 'ORDER_PRICE_PER_KM',
 
+  // Insurance fee charged TO THE RIDER on every completed delivery.
+  // Two knobs; percent takes precedence when > 0, otherwise fixed
+  // applies. Both 0 disables insurance (default — opt-in by ops).
+  // Deducted from the driver's wallet credit at delivery settlement
+  // and recorded as a separate DEBIT transaction so the rider's
+  // history shows the gross credit and the insurance debit
+  // distinctly.
+  ORDER_INSURANCE_FEE_FIXED = 'ORDER_INSURANCE_FEE_FIXED',
+  ORDER_INSURANCE_FEE_PERCENT = 'ORDER_INSURANCE_FEE_PERCENT',
+
   // Package Size Multipliers
   PACKAGE_SIZE_SMALL_MULTIPLIER = 'PACKAGE_SIZE_SMALL_MULTIPLIER',
   PACKAGE_SIZE_MEDIUM_MULTIPLIER = 'PACKAGE_SIZE_MEDIUM_MULTIPLIER',
@@ -78,6 +88,18 @@ export const DEFAULT_CONFIG_VALUES: Record<
   [ConfigKey.ORDER_PRICE_PER_KM]: {
     value: '100',
     description: 'Price (in Naira) per kilometer for deliveries',
+    dataType: 'number',
+  },
+  [ConfigKey.ORDER_INSURANCE_FEE_FIXED]: {
+    value: '0',
+    description:
+      'Fixed insurance fee (Naira) debited from the rider per delivery. Used when ORDER_INSURANCE_FEE_PERCENT is 0. Set both to 0 to disable insurance.',
+    dataType: 'number',
+  },
+  [ConfigKey.ORDER_INSURANCE_FEE_PERCENT]: {
+    value: '0',
+    description:
+      'Insurance fee as a percentage (0–100) of the order price, debited from the rider per delivery. Takes precedence over the fixed fee when > 0.',
     dataType: 'number',
   },
   [ConfigKey.PACKAGE_SIZE_SMALL_MULTIPLIER]: {
