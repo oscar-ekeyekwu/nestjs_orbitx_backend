@@ -81,6 +81,13 @@ class UpdateDriverSettingsDto {
   driverCommissionPct?: number;
 }
 
+class UpdateMapsSettingsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  apiKey?: string;
+}
+
 class UpdatePricingSettingsDto {
   @IsOptional()
   @IsNumber()
@@ -277,6 +284,39 @@ export class ConfigController {
       ]);
 
     return { driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct };
+  }
+
+  @Get('maps-settings')
+  @ApiOperation({
+    summary:
+      'Get the Google Maps API key status (masked). Admin-only path that returns whether the key is set + the last 4 chars for visual confirmation, never the plaintext.',
+  })
+  async getMapsSettings(): Promise<{ configured: boolean; maskedKey: string }> {
+    const key = await this.configService.getString(
+      ConfigKey.GOOGLE_MAPS_API_KEY,
+      '',
+    );
+    if (!key) return { configured: false, maskedKey: '' };
+    const last4 = key.slice(-4);
+    const masked = `${'•'.repeat(Math.max(0, key.length - 4))}${last4}`;
+    return { configured: true, maskedKey: masked };
+  }
+
+  @Put('maps-settings')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Set the Google Maps API key (Admin only). Plaintext on POST.',
+  })
+  async updateMapsSettings(
+    @Body() dto: UpdateMapsSettingsDto,
+  ): Promise<{ configured: boolean; maskedKey: string }> {
+    const value = (dto.apiKey ?? '').trim();
+    await this.configService.update(ConfigKey.GOOGLE_MAPS_API_KEY, {
+      key: ConfigKey.GOOGLE_MAPS_API_KEY,
+      value,
+      dataType: 'string',
+    });
+    return this.getMapsSettings();
   }
 
   @Get('support-info')

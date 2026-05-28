@@ -53,6 +53,12 @@ export enum ConfigKey {
   // apps. Stored as JSON `{ phone, email, whatsapp, hours }` so the
   // admin can update without a deploy. Mirrors PLATFORM_BANK_ACCOUNT.
   SUPPORT_CONTACT_INFO = 'SUPPORT_CONTACT_INFO',
+
+  // Google Maps Platform API key used by the maps proxy
+  // (POST /maps/...). Mobile clients never see this — they call the
+  // backend, the backend calls Google with the key. Rotate any time
+  // from the admin Maps Settings page; no APK rebuild needed.
+  GOOGLE_MAPS_API_KEY = 'GOOGLE_MAPS_API_KEY',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -177,5 +183,11 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'Public support contact info shown in the mobile apps (driver Support page and customer Contact Us). JSON shape: { phone, email, whatsapp, hours }. Admins update via Settings → Support Info.',
     dataType: 'json',
+  },
+  [ConfigKey.GOOGLE_MAPS_API_KEY]: {
+    value: '',
+    description:
+      'Google Maps Platform API key used by the maps proxy. Mobile clients never see this — they call the backend, which calls Google. Leave blank until set via the admin Maps Settings page.',
+    dataType: 'string',
   },
 };
