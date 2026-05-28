@@ -172,6 +172,45 @@ describe('OrdersService.markCashCollected (G2)', () => {
     expect(wallet.balance.toString()).toBe('1440');
   });
 
+  it('debits the order.insuranceFee from the driver credit', async () => {
+    const order = buildOrder({ insuranceFee: naira('50') });
+    const wallet = buildWallet();
+    manager.findOne.mockResolvedValueOnce(order).mockResolvedValueOnce(wallet);
+
+    await service.markCashCollected('order-1', 'driver-1');
+
+    // ₦1000 fee, 20% commission = ₦200 → share ₦800 → minus ₦50
+    // insurance = ₦750 net credit to the driver wallet.
+    expect(wallet.balance.toString()).toBe('750');
+    expect(wallet.totalEarnings.toString()).toBe('750');
+
+    const inserted = manager.insert.mock.calls[0][1] as {
+      amount: { toString(): string };
+      commission: { toString(): string };
+      description: string;
+    };
+    expect(inserted.amount.toString()).toBe('750');
+    expect(inserted.commission.toString()).toBe('200');
+    expect(inserted.description).toContain('₦50 insurance');
+  });
+
+  it('caps insurance at the driver share when misconfigured (no negative credit)', async () => {
+    // Order priced ₦1000, 20% commission leaves ₦800 share. Admin
+    // sets insurance to ₦1500 — capped to ₦800 so the credit is ₦0,
+    // never negative.
+    const order = buildOrder({ insuranceFee: naira('1500') });
+    const wallet = buildWallet();
+    manager.findOne.mockResolvedValueOnce(order).mockResolvedValueOnce(wallet);
+
+    await service.markCashCollected('order-1', 'driver-1');
+
+    expect(wallet.balance.toString()).toBe('0');
+    const inserted = manager.insert.mock.calls[0][1] as {
+      amount: { toString(): string };
+    };
+    expect(inserted.amount.toString()).toBe('0');
+  });
+
   it('is idempotent — second call on a COMPLETED row returns the order untouched', async () => {
     const order = buildOrder({
       paymentStatus: OrderPaymentStatus.COMPLETED,

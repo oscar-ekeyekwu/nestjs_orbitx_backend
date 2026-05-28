@@ -12,6 +12,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { OrderShareService } from './order-share.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { EstimateOrderDto } from './dto/estimate-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -36,6 +37,16 @@ export class OrdersController {
   @ApiOperation({ summary: 'Create a new order (Customer only)' })
   create(@Body() createOrderDto: CreateOrderDto, @CurrentUser() user: User) {
     return this.ordersService.create(createOrderDto, user.id);
+  }
+
+  @Post('estimate')
+  @Roles(UserRole.CUSTOMER)
+  @ApiOperation({
+    summary:
+      'Estimate the price + insurance for a tentative order (Customer only). No DB writes, no broadcast.',
+  })
+  estimate(@Body() dto: EstimateOrderDto) {
+    return this.ordersService.estimate(dto);
   }
 
   @Get()

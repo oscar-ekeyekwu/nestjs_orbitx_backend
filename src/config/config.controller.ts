@@ -81,6 +81,13 @@ class UpdateDriverSettingsDto {
   driverCommissionPct?: number;
 }
 
+class UpdateMapsSettingsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  apiKey?: string;
+}
+
 class UpdatePricingSettingsDto {
   @IsOptional()
   @IsNumber()
@@ -101,6 +108,19 @@ class UpdatePricingSettingsDto {
   @IsOptional()
   @IsNumber()
   largePackageMultiplier?: number;
+
+  /**
+   * Insurance fee debited to the rider per completed delivery. Two
+   * knobs; percent takes precedence when > 0, otherwise fixed
+   * applies. Both 0 = insurance disabled (default).
+   */
+  @IsOptional()
+  @IsNumber()
+  insuranceFeeFixed?: number;
+
+  @IsOptional()
+  @IsNumber()
+  insuranceFeePercent?: number;
 }
 
 @ApiTags('Configuration')
@@ -143,6 +163,8 @@ export class ConfigController {
       smallPackageMultiplier,
       mediumPackageMultiplier,
       largePackageMultiplier,
+      insuranceFeeFixed,
+      insuranceFeePercent,
     ] = await Promise.all([
       this.configService.getNumber(ConfigKey.ORDER_BASE_PRICE, 1000),
       this.configService.getNumber(ConfigKey.ORDER_PRICE_PER_KM, 100),
@@ -152,6 +174,8 @@ export class ConfigController {
         1.5,
       ),
       this.configService.getNumber(ConfigKey.PACKAGE_SIZE_LARGE_MULTIPLIER, 2),
+      this.configService.getNumber(ConfigKey.ORDER_INSURANCE_FEE_FIXED, 0),
+      this.configService.getNumber(ConfigKey.ORDER_INSURANCE_FEE_PERCENT, 0),
     ]);
     return {
       baseFare,
@@ -159,6 +183,8 @@ export class ConfigController {
       smallPackageMultiplier,
       mediumPackageMultiplier,
       largePackageMultiplier,
+      insuranceFeeFixed,
+      insuranceFeePercent,
     };
   }
 
@@ -166,12 +192,28 @@ export class ConfigController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update pricing settings (Admin only)' })
   async updatePricingSettings(@Body() dto: UpdatePricingSettingsDto) {
+    if (
+      dto.insuranceFeePercent !== undefined &&
+      (dto.insuranceFeePercent < 0 || dto.insuranceFeePercent > 100)
+    ) {
+      throw new BadRequestException(
+        'insuranceFeePercent must be between 0 and 100.',
+      );
+    }
+    if (dto.insuranceFeeFixed !== undefined && dto.insuranceFeeFixed < 0) {
+      throw new BadRequestException(
+        'insuranceFeeFixed must be 0 or greater.',
+      );
+    }
+
     const fieldToKey: Array<[keyof UpdatePricingSettingsDto, ConfigKey]> = [
       ['baseFare', ConfigKey.ORDER_BASE_PRICE],
       ['perKmRate', ConfigKey.ORDER_PRICE_PER_KM],
       ['smallPackageMultiplier', ConfigKey.PACKAGE_SIZE_SMALL_MULTIPLIER],
       ['mediumPackageMultiplier', ConfigKey.PACKAGE_SIZE_MEDIUM_MULTIPLIER],
       ['largePackageMultiplier', ConfigKey.PACKAGE_SIZE_LARGE_MULTIPLIER],
+      ['insuranceFeeFixed', ConfigKey.ORDER_INSURANCE_FEE_FIXED],
+      ['insuranceFeePercent', ConfigKey.ORDER_INSURANCE_FEE_PERCENT],
     ];
 
     const updates = fieldToKey
@@ -242,6 +284,39 @@ export class ConfigController {
       ]);
 
     return { driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct };
+  }
+
+  @Get('maps-settings')
+  @ApiOperation({
+    summary:
+      'Get the Google Maps API key status (masked). Admin-only path that returns whether the key is set + the last 4 chars for visual confirmation, never the plaintext.',
+  })
+  async getMapsSettings(): Promise<{ configured: boolean; maskedKey: string }> {
+    const key = await this.configService.getString(
+      ConfigKey.GOOGLE_MAPS_API_KEY,
+      '',
+    );
+    if (!key) return { configured: false, maskedKey: '' };
+    const last4 = key.slice(-4);
+    const masked = `${'•'.repeat(Math.max(0, key.length - 4))}${last4}`;
+    return { configured: true, maskedKey: masked };
+  }
+
+  @Put('maps-settings')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Set the Google Maps API key (Admin only). Plaintext on POST.',
+  })
+  async updateMapsSettings(
+    @Body() dto: UpdateMapsSettingsDto,
+  ): Promise<{ configured: boolean; maskedKey: string }> {
+    const value = (dto.apiKey ?? '').trim();
+    await this.configService.update(ConfigKey.GOOGLE_MAPS_API_KEY, {
+      key: ConfigKey.GOOGLE_MAPS_API_KEY,
+      value,
+      dataType: 'string',
+    });
+    return this.getMapsSettings();
   }
 
   @Get('support-info')

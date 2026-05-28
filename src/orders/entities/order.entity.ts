@@ -132,6 +132,19 @@ export class Order {
   })
   finalPrice: Naira | null;
 
+  // Insurance fee captured at order-create time from
+  // ORDER_INSURANCE_FEE_FIXED / ORDER_INSURANCE_FEE_PERCENT. Stored
+  // here so retroactive config changes never rewrite historical
+  // settlements. Debited from the rider's wallet at delivery
+  // settlement; the customer never sees it on the price they pay.
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    nullable: true,
+    transformer: nairaTransformer,
+  })
+  insuranceFee: Naira | null;
+
   // G2 — chosen payment channel (defaults to cash since v0 implicitly
   // assumed cash on delivery). Updated server-side from CreateOrderDto.
   @Column({

@@ -47,7 +47,7 @@ import { NotificationsService } from '../notifications/notification.service';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { User } from '../users/entities/user.entity';
 import Decimal from 'decimal.js';
-import { Naira, naira } from '../common/money';
+import { NAIRA_ZERO, Naira, naira } from '../common/money';
 import { haversineKm } from '../common/geo';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
@@ -157,6 +157,11 @@ export class OrdersService {
       createOrderDto.packageSize,
     );
 
+    // Snapshot the insurance fee at create time. Stored on the order
+    // so retroactive admin changes to the fee config never rewrite
+    // historical settlements.
+    const insuranceFee = await this.calculateInsuranceFee(estimatedPrice);
+
     // G2 / G3 — payment method ships as part of the create DTO; default
     // to CASH so v0 clients (which don't send the field) keep working.
     //   cash          → pending_cash     (driver collects)
@@ -187,6 +192,7 @@ export class OrdersService {
       ...createOrderDto,
       customerId,
       estimatedPrice,
+      insuranceFee,
       status: OrderStatus.PENDING,
       paymentMethod,
       paymentStatus,
@@ -251,6 +257,47 @@ export class OrdersService {
     });
 
     return savedOrder;
+  }
+
+  /**
+   * Pricing-only path used by the customer create-order screen to
+   * show a live, distance-aware estimate as the user fills the form.
+   * Reuses the same calculatePrice + calculateInsuranceFee helpers as
+   * `create()` so the mobile preview can't drift from the persisted
+   * value. Returns string-serialized Naira fields (matching the wire
+   * format every other money-bearing response uses) plus the raw
+   * great-circle distance for the UI.
+   */
+  async estimate(input: {
+    pickupLatitude: number;
+    pickupLongitude: number;
+    deliveryLatitude: number;
+    deliveryLongitude: number;
+    packageSize: PackageSize;
+  }): Promise<{
+    estimatedPrice: string;
+    insuranceFee: string | null;
+    distanceKm: string;
+  }> {
+    const distance = this.calculateDistance(
+      input.pickupLatitude,
+      input.pickupLongitude,
+      input.deliveryLatitude,
+      input.deliveryLongitude,
+    );
+    const estimatedPrice = await this.calculatePrice(
+      input.pickupLatitude,
+      input.pickupLongitude,
+      input.deliveryLatitude,
+      input.deliveryLongitude,
+      input.packageSize,
+    );
+    const insuranceFee = await this.calculateInsuranceFee(estimatedPrice);
+    return {
+      estimatedPrice: estimatedPrice.toString(),
+      insuranceFee: insuranceFee ? insuranceFee.toString() : null,
+      distanceKm: distance.toFixed(2),
+    };
   }
 
   async findAll(
@@ -671,6 +718,28 @@ export class OrdersService {
       // the split result so we can lock it onto the transaction row.
       const split = await this.walletService.applyCommission(fee);
 
+      // Insurance fee snapshot was captured at order-create time onto
+      // `order.insuranceFee`. Debit it from the driver's share so the
+      // rider effectively pays for per-trip insurance. Cap at the
+      // post-commission share so we can't drive the credit negative
+      // even if an admin sets a misconfigured rate.
+      const insuranceFee = (order.insuranceFee ?? NAIRA_ZERO) as Naira;
+      const cappedInsurance = (
+        insuranceFee.greaterThan(split.driverShare)
+          ? split.driverShare
+          : insuranceFee
+      ) as Naira;
+      if (cappedInsurance.lessThan(insuranceFee)) {
+        this.logger.warn(
+          `Order ${order.id}: configured insurance fee ` +
+            `${insuranceFee.toString()} exceeded driver share ` +
+            `${split.driverShare.toString()}. Capped to share so the ` +
+            `wallet credit doesn't go negative — review ` +
+            `ORDER_INSURANCE_FEE_* config.`,
+        );
+      }
+      const netCredit = split.driverShare.minus(cappedInsurance) as Naira;
+
       const driverWallet = await manager.findOne(Wallet, {
         where: { userId: driverId },
         lock: { mode: 'pessimistic_write' },
@@ -678,25 +747,27 @@ export class OrdersService {
       if (!driverWallet) {
         throw new NotFoundException('Driver wallet not provisioned.');
       }
-      driverWallet.balance = driverWallet.balance.plus(
-        split.driverShare,
-      ) as Naira;
+      driverWallet.balance = driverWallet.balance.plus(netCredit) as Naira;
       driverWallet.totalEarnings = driverWallet.totalEarnings.plus(
-        split.driverShare,
+        netCredit,
       ) as Naira;
       await manager.save(driverWallet);
+
+      const description = cappedInsurance.greaterThan(NAIRA_ZERO)
+        ? `Cash collection for order ${order.id} (₦${split.commission.toString()} commission, ₦${cappedInsurance.toString()} insurance)`
+        : `Cash collection for order ${order.id}`;
 
       await manager.insert(Transaction, {
         walletId: driverWallet.id,
         orderId: order.id,
         type: TransactionType.CREDIT,
-        amount: split.driverShare,
+        amount: netCredit,
         commission: split.commission,
         commissionPct: String(split.commissionPct),
         balanceAfter: driverWallet.balance,
         status: TransactionStatus.COMPLETED,
         paymentMethod: PaymentMethod.CASH,
-        description: `Cash collection for order ${order.id}`,
+        description,
       });
 
       order.paymentStatus = OrderPaymentStatus.COMPLETED;
@@ -905,6 +976,40 @@ export class OrdersService {
         `Cannot transition from ${currentStatus} to ${newStatus}`,
       );
     }
+  }
+
+  /**
+   * Resolve the per-delivery insurance fee from system_configs.
+   *
+   * Precedence: PERCENT > FIXED. If `ORDER_INSURANCE_FEE_PERCENT` is
+   * a positive number, the fee is that percentage of `orderPrice`.
+   * Otherwise `ORDER_INSURANCE_FEE_FIXED` is used as a flat amount.
+   * Both 0 (the default) means insurance is disabled — returns null
+   * so the order has no insuranceFee column set and the settlement
+   * path can short-circuit.
+   *
+   * Negative percentages and percentages > 100 are clamped to 0 (a
+   * "configuration tampering" guard, mirroring applyCommission).
+   */
+  private async calculateInsuranceFee(orderPrice: Naira): Promise<Naira | null> {
+    const percent = await this.configService.getNumber(
+      ConfigKey.ORDER_INSURANCE_FEE_PERCENT,
+      0,
+    );
+    if (Number.isFinite(percent) && percent > 0 && percent <= 100) {
+      return orderPrice
+        .times(percent)
+        .dividedBy(100)
+        .toDecimalPlaces(0, Decimal.ROUND_HALF_UP) as Naira;
+    }
+    const fixed = await this.configService.getNumber(
+      ConfigKey.ORDER_INSURANCE_FEE_FIXED,
+      0,
+    );
+    if (Number.isFinite(fixed) && fixed > 0) {
+      return naira(String(fixed));
+    }
+    return null;
   }
 
   private async calculatePrice(
