@@ -83,11 +83,19 @@ export class MapsService {
     const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params.toString()}`;
     const data = await this.fetchJson(url, 'places.autocomplete');
 
-    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+    if (data.status === 'ZERO_RESULTS') return [];
+    if (data.status !== 'OK') {
+      // REQUEST_DENIED / INVALID_REQUEST / OVER_QUERY_LIMIT etc.
+      // Surface as 503 with the upstream status so the mobile UI can
+      // show "Maps unavailable" instead of an empty suggestion list
+      // that looks like "no results."
       this.logger.warn(
         `Places autocomplete returned status=${data.status} for input=${input}`,
       );
-      return [];
+      throw new ServiceUnavailableException({
+        message: `Maps unavailable (${data.status}). Check the admin Maps API Key and that Places API + Geocoding API are enabled.`,
+        upstreamStatus: data.status,
+      });
     }
     const predictions = Array.isArray(data.predictions) ? data.predictions : [];
     return predictions.map(
@@ -156,12 +164,17 @@ export class MapsService {
     const url = `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`;
     const data = await this.fetchJson(url, 'geocode');
 
-    if (data.status !== 'OK' || !Array.isArray(data.results) || data.results.length === 0) {
-      if (data.status !== 'ZERO_RESULTS') {
-        this.logger.warn(
-          `Geocode returned status=${data.status} for address=${address}`,
-        );
-      }
+    if (data.status === 'ZERO_RESULTS') return null;
+    if (data.status !== 'OK') {
+      this.logger.warn(
+        `Geocode returned status=${data.status} for address=${address}`,
+      );
+      throw new ServiceUnavailableException({
+        message: `Maps unavailable (${data.status}). Check the admin Maps API Key and that Geocoding API is enabled.`,
+        upstreamStatus: data.status,
+      });
+    }
+    if (!Array.isArray(data.results) || data.results.length === 0) {
       return null;
     }
     const first = data.results[0];

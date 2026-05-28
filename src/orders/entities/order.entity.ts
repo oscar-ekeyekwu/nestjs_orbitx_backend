@@ -12,6 +12,21 @@ import type { Naira } from '../../common/money';
 import { nairaTransformer } from '../../common/money';
 import { PaymentMethod } from '../../wallet/enums/payment-method.enum';
 
+/**
+ * PG `decimal` columns come back from node-postgres as strings to
+ * preserve precision (JS `number` can't safely hold arbitrary
+ * decimals). Coordinates fit comfortably inside Number's safe range
+ * (±90 / ±180 with 7 fractional digits), so we coerce on read here
+ * and the mobile `<Marker>` props receive real numbers instead of
+ * strings — react-native-maps throws "value for latitude cannot be
+ * set from string to double" otherwise.
+ */
+const numericDecimalTransformer = {
+  to: (value: number | null | undefined): number | null | undefined => value,
+  from: (value: string | null): number | null =>
+    value == null ? null : parseFloat(value),
+};
+
 export enum OrderStatus {
   PENDING = 'pending',
   ACCEPTED = 'accepted',
@@ -71,20 +86,36 @@ export class Order {
   status: OrderStatus;
 
   // Pickup Location
-  @Column('decimal', { precision: 10, scale: 7 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    transformer: numericDecimalTransformer,
+  })
   pickupLatitude: number;
 
-  @Column('decimal', { precision: 10, scale: 7 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    transformer: numericDecimalTransformer,
+  })
   pickupLongitude: number;
 
   @Column()
   pickupAddress: string;
 
   // Delivery Location
-  @Column('decimal', { precision: 10, scale: 7 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    transformer: numericDecimalTransformer,
+  })
   deliveryLatitude: number;
 
-  @Column('decimal', { precision: 10, scale: 7 })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    transformer: numericDecimalTransformer,
+  })
   deliveryLongitude: number;
 
   @Column()
@@ -179,10 +210,20 @@ export class Order {
   updatedAt: Date;
 
   // Driver's current location (updated in real-time)
-  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    nullable: true,
+    transformer: numericDecimalTransformer,
+  })
   driverLatitude: number;
 
-  @Column('decimal', { precision: 10, scale: 7, nullable: true })
+  @Column('decimal', {
+    precision: 10,
+    scale: 7,
+    nullable: true,
+    transformer: numericDecimalTransformer,
+  })
   driverLongitude: number;
 
   // J4 — order-match observability. Stamped at broadcast + accept so the
