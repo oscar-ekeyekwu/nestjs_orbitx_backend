@@ -68,10 +68,12 @@ export class OrdersController {
   findAvailable(
     @Query('latitude') latitude: string,
     @Query('longitude') longitude: string,
+    @CurrentUser() user: User,
   ) {
     return this.ordersService.findAvailableOrders(
       parseFloat(latitude),
       parseFloat(longitude),
+      user.id,
     );
   }
 

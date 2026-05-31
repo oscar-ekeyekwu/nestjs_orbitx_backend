@@ -181,9 +181,7 @@ export class PaymentController {
           reference: event.reference,
         });
       } catch (error) {
-        this.logger.error(
-          `Failed to fund wallet for user ${userId}: ${error}`,
-        );
+        this.logger.error(`Failed to fund wallet for user ${userId}: ${error}`);
       }
     }
 

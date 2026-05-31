@@ -25,13 +25,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { SystemConfigService } from '../config/config.service';
 import { ConfigKey } from '../config/enums/config-keys.enum';
 import { assertInsideLagos, assertInsideNigeria } from '../common/geo';
-import {
-  PaymentMethod,
-  Transaction,
-  TransactionStatus,
-  TransactionType,
-} from '../wallet/entities/transaction.entity';
-import { Wallet } from '../wallet/entities/wallet.entity';
+import { PaymentMethod } from '../wallet/entities/transaction.entity';
 import {
   ApprovalAction,
   ApprovalDecision,
@@ -162,6 +156,13 @@ export class OrdersService {
     // historical settlements.
     const insuranceFee = await this.calculateInsuranceFee(estimatedPrice);
 
+    // Snapshot the per-order platform charge (flat or capped percentage)
+    // at create time too. This single value gates driver visibility, the
+    // accept-time balance check, and the wallet hold — all read from the
+    // order so a later config change never rewrites an in-flight order.
+    const platformCharge =
+      await this.walletService.computeOrderCharge(estimatedPrice);
+
     // G2 / G3 — payment method ships as part of the create DTO; default
     // to CASH so v0 clients (which don't send the field) keep working.
     //   cash          → pending_cash     (driver collects)
@@ -193,6 +194,7 @@ export class OrdersService {
       customerId,
       estimatedPrice,
       insuranceFee,
+      platformCharge,
       status: OrderStatus.PENDING,
       paymentMethod,
       paymentStatus,
@@ -254,6 +256,12 @@ export class OrdersService {
       pickupAddress: savedOrder.pickupAddress,
       deliveryAddress: savedOrder.deliveryAddress,
       estimatedPriceNaira: Number(savedOrder.estimatedPrice),
+      // Proximity + balance dispatch inputs — the push subscriber filters
+      // recipients to drivers within radius of the pickup whose wallet can
+      // cover the charge.
+      pickupLatitude: savedOrder.pickupLatitude,
+      pickupLongitude: savedOrder.pickupLongitude,
+      platformChargeNaira: Number(savedOrder.platformCharge ?? 0),
     });
 
     return savedOrder;
@@ -342,12 +350,18 @@ export class OrdersService {
   async findAvailableOrders(
     driverLat: number,
     driverLng: number,
+    driverId: string,
   ): Promise<Order[]> {
     // Get delivery radius from config
     const deliveryRadiusKm = await this.configService.getNumber(
       ConfigKey.ORDER_DELIVERY_RADIUS_KM,
       50,
     );
+
+    // Balance-gated visibility: a driver below an order's platform charge
+    // must not see it. Load the wallet balance once and filter below.
+    const wallet = await this.walletService.getWalletByUserId(driverId);
+    const balance = wallet.balance;
 
     // G3 — exclude orders whose payment is still being arranged
     // off-platform (pending_transfer for manual bank transfer, plain
@@ -367,8 +381,13 @@ export class OrdersService {
       .orderBy('order.createdAt', 'ASC')
       .getMany();
 
-    // Calculate distance and filter by configured radius
+    // Calculate distance, filter by configured radius, and hide orders the
+    // driver can't afford (platformCharge null on pre-migration rows →
+    // treated as 0 so they stay visible for back-compat).
     return orders
+      .filter((order) =>
+        (order.platformCharge ?? NAIRA_ZERO).lessThanOrEqualTo(balance),
+      )
       .map((order) => ({
         ...order,
         distance: this.calculateDistance(
@@ -427,16 +446,25 @@ export class OrdersService {
   }
 
   async acceptOrder(orderId: string, driverId: string): Promise<Order> {
-    // Balance gate runs BEFORE the lock so a broke driver doesn't hold
-    // the row open while the wallet check runs.
-    const canTakeOrder = await this.walletService.canDriverTakeOrder(driverId);
-    if (!canTakeOrder) {
-      const minBalance = await this.configService.getNumber(
-        ConfigKey.DRIVER_MIN_BALANCE,
-        0,
-      );
+    // Per-order balance gate runs BEFORE the lock so a driver who can't
+    // cover THIS order's charge doesn't hold the row open. Read the
+    // snapshotted charge off the order (null on pre-migration rows →
+    // treated as zero so the gate passes for back-compat).
+    const chargeProbe = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      select: ['id', 'platformCharge'],
+    });
+    if (!chargeProbe) {
+      throw new NotFoundException('Order not found');
+    }
+    const orderCharge = chargeProbe.platformCharge ?? NAIRA_ZERO;
+    const canCover = await this.walletService.canDriverCoverCharge(
+      driverId,
+      orderCharge,
+    );
+    if (!canCover) {
       throw new BadRequestException(
-        `Insufficient balance. Minimum balance of ₦${minBalance} required to accept orders`,
+        `Insufficient wallet balance. ₦${orderCharge.toString()} required to accept this order.`,
       );
     }
 
@@ -512,12 +540,14 @@ export class OrdersService {
       });
     });
 
-    // Deduct security deposit AFTER the lock releases. If this fails,
-    // the order is still validly accepted; the wallet error surfaces to
-    // the caller and an oncall reviewer reconciles. Inverting the order
-    // (deduct first then save) would risk taking money from a driver
-    // whose lock attempt loses, which is much worse.
-    await this.walletService.deductSecurityDeposit(driverId, orderId);
+    // Hold the per-order platform charge AFTER the lock releases. If this
+    // fails, the order is still validly accepted; the wallet error
+    // surfaces to the caller and an oncall reviewer reconciles. Inverting
+    // the order (deduct first then save) would risk taking money from a
+    // driver whose lock attempt loses, which is much worse. holdOrderCharge
+    // re-checks the balance under its own lock — the concurrency backstop
+    // for the pre-lock gate above.
+    await this.walletService.holdOrderCharge(driverId, orderId, orderCharge);
 
     if (acceptedOrder) {
       // ARCH-12 — fan out order_taken so other drivers in the eligible
@@ -608,17 +638,20 @@ export class OrdersService {
       order.deliveredAt = new Date();
       order.finalPrice = order.estimatedPrice;
 
-      if (order.driverId) {
-        // Refund security deposit first, then credit earnings
-        await this.walletService.refundSecurityDeposit(
-          order.driverId,
-          order.id,
-        );
+      // Cash orders (the default model): the driver collected and KEEPS
+      // all the cash. The platform's revenue is the per-order charge,
+      // already held from the wallet on acceptance — nothing to credit or
+      // refund here, so the charge is simply finalized (kept).
+      //
+      // Legacy non-cash orders (card / bank transfer): the platform holds
+      // the customer's money, so credit the driver their earnings net of
+      // commission as before. The accept-time charge hold still applies.
+      if (order.driverId && order.paymentMethod !== PaymentMethod.CASH) {
         await this.walletService.processOrderPayment(
           order.driverId,
           order.id,
           order.finalPrice,
-          PaymentMethod.CASH,
+          order.paymentMethod,
         );
       }
     }
@@ -671,11 +704,15 @@ export class OrdersService {
   /**
    * G2 — driver confirms cash payment received on a delivered order.
    *
-   *  - Validates the order belongs to this driver + the channel is
-   *    cash + the order is delivered + payment is still pending.
-   *  - Settles in one transaction: inserts a Transaction row (method
-   *    cash) for the gross fee, credits the driver's wallet net of
-   *    commission, leaves the commission as the platform's share.
+   * Cash-only model: the driver collected and KEEPS all the cash. The
+   * platform's revenue is the per-order charge, already held from the
+   * driver's prepaid wallet on acceptance. So this no longer credits the
+   * wallet, splits commission, or inserts a settlement transaction — it
+   * simply records that cash was collected: flip PENDING_CASH → COMPLETED
+   * and stamp finalPrice (audit only).
+   *
+   *  - Validates the order belongs to this driver + the channel is cash +
+   *    the order is delivered + payment is still pending.
    *  - Idempotent: a second call after settlement returns the order
    *    unchanged with paymentStatus already COMPLETED.
    */
@@ -713,65 +750,8 @@ export class OrdersService {
         );
       }
 
-      const fee = order.finalPrice ?? order.estimatedPrice;
-      // G5 — split via the centralized helper. The rate is captured on
-      // the split result so we can lock it onto the transaction row.
-      const split = await this.walletService.applyCommission(fee);
-
-      // Insurance fee snapshot was captured at order-create time onto
-      // `order.insuranceFee`. Debit it from the driver's share so the
-      // rider effectively pays for per-trip insurance. Cap at the
-      // post-commission share so we can't drive the credit negative
-      // even if an admin sets a misconfigured rate.
-      const insuranceFee = (order.insuranceFee ?? NAIRA_ZERO) as Naira;
-      const cappedInsurance = (
-        insuranceFee.greaterThan(split.driverShare)
-          ? split.driverShare
-          : insuranceFee
-      ) as Naira;
-      if (cappedInsurance.lessThan(insuranceFee)) {
-        this.logger.warn(
-          `Order ${order.id}: configured insurance fee ` +
-            `${insuranceFee.toString()} exceeded driver share ` +
-            `${split.driverShare.toString()}. Capped to share so the ` +
-            `wallet credit doesn't go negative — review ` +
-            `ORDER_INSURANCE_FEE_* config.`,
-        );
-      }
-      const netCredit = split.driverShare.minus(cappedInsurance) as Naira;
-
-      const driverWallet = await manager.findOne(Wallet, {
-        where: { userId: driverId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!driverWallet) {
-        throw new NotFoundException('Driver wallet not provisioned.');
-      }
-      driverWallet.balance = driverWallet.balance.plus(netCredit) as Naira;
-      driverWallet.totalEarnings = driverWallet.totalEarnings.plus(
-        netCredit,
-      ) as Naira;
-      await manager.save(driverWallet);
-
-      const description = cappedInsurance.greaterThan(NAIRA_ZERO)
-        ? `Cash collection for order ${order.id} (₦${split.commission.toString()} commission, ₦${cappedInsurance.toString()} insurance)`
-        : `Cash collection for order ${order.id}`;
-
-      await manager.insert(Transaction, {
-        walletId: driverWallet.id,
-        orderId: order.id,
-        type: TransactionType.CREDIT,
-        amount: netCredit,
-        commission: split.commission,
-        commissionPct: String(split.commissionPct),
-        balanceAfter: driverWallet.balance,
-        status: TransactionStatus.COMPLETED,
-        paymentMethod: PaymentMethod.CASH,
-        description,
-      });
-
       order.paymentStatus = OrderPaymentStatus.COMPLETED;
-      order.finalPrice = fee;
+      order.finalPrice = order.finalPrice ?? order.estimatedPrice;
       return manager.save(order);
     });
   }
@@ -928,9 +908,15 @@ export class OrdersService {
       throw new BadRequestException('Cannot cancel delivered order');
     }
 
-    // Refund security deposit if order was already accepted
+    // Refund the held per-order charge if the order was already accepted
+    // (PENDING orders never held anything). Idempotency-guarded inside the
+    // wallet service so a retried cancel can't double-refund.
     if (order.driverId && order.status !== OrderStatus.PENDING) {
-      await this.walletService.refundSecurityDeposit(order.driverId, orderId);
+      await this.walletService.refundOrderCharge(
+        order.driverId,
+        orderId,
+        order.platformCharge ?? NAIRA_ZERO,
+      );
     }
 
     order.status = OrderStatus.CANCELLED;
@@ -991,7 +977,9 @@ export class OrdersService {
    * Negative percentages and percentages > 100 are clamped to 0 (a
    * "configuration tampering" guard, mirroring applyCommission).
    */
-  private async calculateInsuranceFee(orderPrice: Naira): Promise<Naira | null> {
+  private async calculateInsuranceFee(
+    orderPrice: Naira,
+  ): Promise<Naira | null> {
     const percent = await this.configService.getNumber(
       ConfigKey.ORDER_INSURANCE_FEE_PERCENT,
       0,

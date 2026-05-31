@@ -13,6 +13,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import {
   IsEmail,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -79,6 +80,27 @@ class UpdateDriverSettingsDto {
   @IsOptional()
   @IsNumber()
   driverCommissionPct?: number;
+
+  /**
+   * Per-order platform charge knobs. Mode selects which inputs apply:
+   * 'flat' → driverChargeFlat; 'percentage' → driverChargePercentage
+   * capped by driverChargeCap.
+   */
+  @IsOptional()
+  @IsIn(['flat', 'percentage'])
+  driverChargeMode?: 'flat' | 'percentage';
+
+  @IsOptional()
+  @IsNumber()
+  driverChargeFlat?: number;
+
+  @IsOptional()
+  @IsNumber()
+  driverChargePercentage?: number;
+
+  @IsOptional()
+  @IsNumber()
+  driverChargeCap?: number;
 }
 
 class UpdateMapsSettingsDto {
@@ -145,16 +167,32 @@ export class ConfigController {
   @Get('driver-settings')
   @ApiOperation({ summary: 'Get driver and order settings' })
   async getDriverSettings() {
-    const [driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct] =
-      await Promise.all([
-        this.configService.getNumber(ConfigKey.DRIVER_MIN_BALANCE, 5000),
-        this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
-        this.configService.getNumber(
-          ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
-          15,
-        ),
-      ]);
-    return { driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct };
+    const [
+      driverMinBalance,
+      orderDeliveryRadiusKm,
+      driverCommissionPct,
+      driverChargeMode,
+      driverChargeFlat,
+      driverChargePercentage,
+      driverChargeCap,
+    ] = await Promise.all([
+      this.configService.getNumber(ConfigKey.DRIVER_MIN_BALANCE, 5000),
+      this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
+      this.configService.getNumber(ConfigKey.DRIVER_COMMISSION_PERCENTAGE, 15),
+      this.configService.getString(ConfigKey.DRIVER_CHARGE_MODE, 'flat'),
+      this.configService.getNumber(ConfigKey.DRIVER_CHARGE_FLAT, 200),
+      this.configService.getNumber(ConfigKey.DRIVER_CHARGE_PERCENTAGE, 10),
+      this.configService.getNumber(ConfigKey.DRIVER_CHARGE_CAP, 0),
+    ]);
+    return {
+      driverMinBalance,
+      orderDeliveryRadiusKm,
+      driverCommissionPct,
+      driverChargeMode,
+      driverChargeFlat,
+      driverChargePercentage,
+      driverChargeCap,
+    };
   }
 
   @Get('pricing-settings')
@@ -206,9 +244,7 @@ export class ConfigController {
       );
     }
     if (dto.insuranceFeeFixed !== undefined && dto.insuranceFeeFixed < 0) {
-      throw new BadRequestException(
-        'insuranceFeeFixed must be 0 or greater.',
-      );
+      throw new BadRequestException('insuranceFeeFixed must be 0 or greater.');
     }
 
     const fieldToKey: Array<[keyof UpdatePricingSettingsDto, ConfigKey]> = [
@@ -276,19 +312,60 @@ export class ConfigController {
       );
     }
 
+    if (dto.driverChargeMode !== undefined) {
+      updates.push(
+        this.configService.update(ConfigKey.DRIVER_CHARGE_MODE, {
+          key: ConfigKey.DRIVER_CHARGE_MODE,
+          value: dto.driverChargeMode,
+          dataType: 'string',
+        }),
+      );
+    }
+
+    if (dto.driverChargeFlat !== undefined) {
+      if (dto.driverChargeFlat < 0) {
+        throw new BadRequestException('driverChargeFlat must be 0 or greater.');
+      }
+      updates.push(
+        this.configService.update(ConfigKey.DRIVER_CHARGE_FLAT, {
+          key: ConfigKey.DRIVER_CHARGE_FLAT,
+          value: String(dto.driverChargeFlat),
+          dataType: 'number',
+        }),
+      );
+    }
+
+    if (dto.driverChargePercentage !== undefined) {
+      if (dto.driverChargePercentage < 0 || dto.driverChargePercentage > 100) {
+        throw new BadRequestException(
+          'driverChargePercentage must be between 0 and 100.',
+        );
+      }
+      updates.push(
+        this.configService.update(ConfigKey.DRIVER_CHARGE_PERCENTAGE, {
+          key: ConfigKey.DRIVER_CHARGE_PERCENTAGE,
+          value: String(dto.driverChargePercentage),
+          dataType: 'number',
+        }),
+      );
+    }
+
+    if (dto.driverChargeCap !== undefined) {
+      if (dto.driverChargeCap < 0) {
+        throw new BadRequestException('driverChargeCap must be 0 or greater.');
+      }
+      updates.push(
+        this.configService.update(ConfigKey.DRIVER_CHARGE_CAP, {
+          key: ConfigKey.DRIVER_CHARGE_CAP,
+          value: String(dto.driverChargeCap),
+          dataType: 'number',
+        }),
+      );
+    }
+
     await Promise.all(updates);
 
-    const [driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct] =
-      await Promise.all([
-        this.configService.getNumber(ConfigKey.DRIVER_MIN_BALANCE, 5000),
-        this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
-        this.configService.getNumber(
-          ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
-          15,
-        ),
-      ]);
-
-    return { driverMinBalance, orderDeliveryRadiusKm, driverCommissionPct };
+    return this.getDriverSettings();
   }
 
   @Get('maps-settings')

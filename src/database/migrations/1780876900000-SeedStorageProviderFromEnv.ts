@@ -50,7 +50,7 @@ export class SeedStorageProviderFromEnv1780876900000
       // the table empty and the documents column nullable; an admin
       // creates the first provider via /settings/storage. Surface the
       // state so the next operator isn't guessing.
-      // eslint-disable-next-line no-console
+
       console.log(
         '[STG-1] SPACES_KEY/SPACES_SECRET not set — skipping bootstrap seed. ' +
           'Create the first storage provider via the admin UI (/settings/storage) ' +

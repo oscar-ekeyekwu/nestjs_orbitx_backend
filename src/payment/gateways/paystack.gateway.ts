@@ -445,7 +445,10 @@ export class PaystackGateway implements IPaymentGateway {
       return { ok: true, latencyMs };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: `Network error contacting Paystack: ${message}` };
+      return {
+        ok: false,
+        error: `Network error contacting Paystack: ${message}`,
+      };
     }
   }
 

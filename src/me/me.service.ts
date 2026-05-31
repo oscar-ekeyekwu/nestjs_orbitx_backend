@@ -95,7 +95,10 @@ export class MeService {
    * BadRequestException for any input that isn't 11 ASCII digits — BVNs
    * are fixed-width per CBN.
    */
-  async setBvn(userId: string, plaintext: string): Promise<{ bvnLast4: string }> {
+  async setBvn(
+    userId: string,
+    plaintext: string,
+  ): Promise<{ bvnLast4: string }> {
     const digits = plaintext.replace(/\D+/g, '');
     if (digits.length !== 11) {
       throw new BadRequestException(
