@@ -17,6 +17,7 @@ import { Document } from '../documents/entities/document.entity';
 import { User } from '../users/entities/user.entity';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import { Transaction } from '../wallet/entities/transaction.entity';
+import { StorageCryptoService } from '../storage/crypto.service';
 
 export interface UserDataExport {
   exportedAt: string;
@@ -85,7 +86,51 @@ export class MeService {
     private readonly transactions: Repository<Transaction>,
     private readonly dataSource: DataSource,
     private readonly approvals: ApprovalsService,
+    private readonly crypto: StorageCryptoService,
   ) {}
+
+  /**
+   * DR-NEW — driver self-sets their BVN. Encrypts plaintext at write
+   * time and caches the last 4 digits for masked admin display. Throws
+   * BadRequestException for any input that isn't 11 ASCII digits — BVNs
+   * are fixed-width per CBN.
+   */
+  async setBvn(userId: string, plaintext: string): Promise<{ bvnLast4: string }> {
+    const digits = plaintext.replace(/\D+/g, '');
+    if (digits.length !== 11) {
+      throw new BadRequestException(
+        'BVN must be exactly 11 digits (Bank Verification Number).',
+      );
+    }
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found.');
+
+    const enc = this.crypto.encryptSecret(digits);
+    user.bvnCipher = enc.cipher;
+    user.bvnNonce = enc.nonce;
+    user.bvnTag = enc.tag;
+    user.bvnKeyVersion = enc.keyVersion;
+    user.bvnLast4 = digits.slice(-4);
+    user.bvnUpdatedAt = new Date();
+    await this.users.save(user);
+    return { bvnLast4: digits.slice(-4) };
+  }
+
+  /**
+   * DR-NEW — masked snapshot for the admin driver-detail page. Returns
+   * `null` when the driver hasn't set their BVN yet so the UI can show
+   * a "not provided" empty state.
+   */
+  async getBvnSnapshot(
+    userId: string,
+  ): Promise<{ last4: string; updatedAt: Date } | null> {
+    const user = await this.users.findOne({
+      where: { id: userId },
+      select: ['id', 'bvnLast4', 'bvnUpdatedAt'],
+    });
+    if (!user || !user.bvnLast4 || !user.bvnUpdatedAt) return null;
+    return { last4: user.bvnLast4, updatedAt: user.bvnUpdatedAt };
+  }
 
   async export(userId: string): Promise<UserDataExport> {
     const user = await this.users.findOne({ where: { id: userId } });

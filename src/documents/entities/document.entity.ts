@@ -25,14 +25,32 @@ export enum DocumentOwnerType {
 export enum DocumentType {
   DRIVERS_LICENSE = 'drivers_license',
   NIN = 'nin',
+  PASSPORT = 'passport',
+  VOTERS_CARD = 'voters_card',
   PROOF_OF_ADDRESS = 'proof_of_address',
   VEHICLE_REGISTRATION = 'vehicle_registration',
+  // Annual vehicle license / road-tax certificate. Distinct from
+  // VEHICLE_REGISTRATION which is the ownership/registration cert.
+  VEHICLE_LICENSE = 'vehicle_license',
+  // Photo of the vehicle showing the registration plate. Stored as a
+  // Document row (reviewable) so it can be expired/replaced on the
+  // same lifecycle as the other vehicle compliance artefacts; the
+  // legacy `vehicles.photoUrl` is kept for now and mirrors the
+  // most recent VEHICLE_PHOTO upload.
+  VEHICLE_PHOTO = 'vehicle_photo',
   ROADWORTHY = 'roadworthy',
   INSURANCE = 'insurance',
+  // LASDRI / Rider's Card permit issued by Lagos State to commercial
+  // motorcycle/tricycle riders. Stored under the legacy enum value
+  // `lasaa_permit` for back-compat with existing seed data; the UI
+  // surfaces it as "Rider's Card (LASDRI)."
   LASAA_PERMIT = 'lasaa_permit',
   NIPOST_LICENSE = 'nipost_license',
   CAC_CERTIFICATE = 'cac_certificate',
   TIN_CERTIFICATE = 'tin_certificate',
+  // Umbrella government-issued ID. PASSPORT + VOTERS_CARD are now
+  // explicit values; GOV_ID is retained for company-director records
+  // that pre-date the split.
   GOV_ID = 'gov_id',
   DIRECTOR_ID = 'director_id',
   SELFIE = 'selfie',
