@@ -24,16 +24,18 @@ export function isAllowedDocumentMimeType(
   return (ALLOWED_DOCUMENT_MIME_TYPES as readonly string[]).includes(value);
 }
 
-// C2 — document types whose AC requires an expiry date on create. The
-// spec lists "license, insurance, roadworthy" explicitly; LASAA permit
-// and NIPOST license also expire and are bundled in (regulator-issued
-// time-bound documents). NIN / CAC / TIN / selfie / gov_id are non-
-// expiring identity artefacts.
+// DR-NEW — expiry is required ONLY for driver-bound permits + identity
+// docs whose issuing body publishes a hard expiry. The v1 spec
+// explicitly drops the expiry requirement for INSURANCE and ROADWORTHY
+// (admins still see the upload date and can replace stale docs as
+// part of normal review, but the customer mobile no longer blocks the
+// upload form on an "expiry date" input the driver often doesn't have
+// in hand). NIN / Passport / Voter's Card / Vehicle Registration /
+// Vehicle License / Vehicle Photo / CAC / TIN / SELFIE / GOV_ID are
+// non-expiring identity / ownership artefacts in this catalogue.
 export const EXPIRY_REQUIRED_DOCUMENT_TYPES: ReadonlySet<DocumentType> =
   new Set([
     DocumentType.DRIVERS_LICENSE,
-    DocumentType.INSURANCE,
-    DocumentType.ROADWORTHY,
     DocumentType.LASAA_PERMIT,
     DocumentType.NIPOST_LICENSE,
   ]);

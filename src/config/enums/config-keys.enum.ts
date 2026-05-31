@@ -59,6 +59,13 @@ export enum ConfigKey {
   // backend, the backend calls Google with the key. Rotate any time
   // from the admin Maps Settings page; no APK rebuild needed.
   GOOGLE_MAPS_API_KEY = 'GOOGLE_MAPS_API_KEY',
+
+  // DR-NEW — DocumentType slugs the customer mobile is allowed to
+  // offer in the driver ID-document picker. JSON array of strings.
+  // Defaults to ['nin', 'drivers_license', 'passport', 'voters_card'];
+  // admin tunes from Settings → ID Document Types without an APK
+  // rebuild.
+  ALLOWED_DRIVER_ID_TYPES = 'ALLOWED_DRIVER_ID_TYPES',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -189,5 +196,11 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'Google Maps Platform API key used by the maps proxy. Mobile clients never see this — they call the backend, which calls Google. Leave blank until set via the admin Maps Settings page.',
     dataType: 'string',
+  },
+  [ConfigKey.ALLOWED_DRIVER_ID_TYPES]: {
+    value: JSON.stringify(['nin', 'drivers_license', 'passport', 'voters_card']),
+    description:
+      'JSON array of DocumentType slugs the customer mobile may offer in its driver ID picker. Admin-tunable from Settings → ID Document Types.',
+    dataType: 'json',
   },
 };

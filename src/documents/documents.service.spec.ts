@@ -415,11 +415,11 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
-    // C2 — expiry-required validation
+    // DR-NEW — expiry-required validation. Insurance + Roadworthy
+    // were dropped from the requires-expiry set per the v1 spec
+    // refresh; only the driver permits remain.
     it.each([
       DocumentType.DRIVERS_LICENSE,
-      DocumentType.INSURANCE,
-      DocumentType.ROADWORTHY,
       DocumentType.LASAA_PERMIT,
       DocumentType.NIPOST_LICENSE,
     ])('DOCUMENT_001 — rejects %s without expiryDate', async (docType) => {
@@ -444,6 +444,10 @@ describe('DocumentsService (ARCH-9 + C1 + C2)', () => {
       DocumentType.NIN,
       DocumentType.CAC_CERTIFICATE,
       DocumentType.SELFIE,
+      // Per the v1 spec refresh, insurance + roadworthy upload without
+      // an expiry date — admins replace stale copies during review.
+      DocumentType.INSURANCE,
+      DocumentType.ROADWORTHY,
     ])('allows non-expiring %s without expiryDate', async (docType) => {
       await expect(
         service.createDocument(

@@ -1,17 +1,28 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { IsString, Matches } from 'class-validator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { User } from '../users/entities/user.entity';
 import { MeService } from './me.service';
+
+class SetBvnDto {
+  @IsString()
+  @Matches(/^\d{11}$/, {
+    message: 'BVN must be exactly 11 digits (Bank Verification Number).',
+  })
+  bvn: string;
+}
 
 /**
  * I1 — NDPA data-subject-rights endpoints. All routes are scoped to
@@ -77,5 +88,24 @@ export class MeController {
   async consent(@CurrentUser() user: User) {
     const updated = await this.service.consent(user.id);
     return { consentedAt: updated.consentedAt };
+  }
+
+  @Put('bvn')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'DR-NEW — store the caller`s Bank Verification Number (11 digits). Plaintext is encrypted at rest; only the last 4 digits are kept in plaintext for the masked admin display.',
+  })
+  async setBvn(@CurrentUser() user: User, @Body() dto: SetBvnDto) {
+    return this.service.setBvn(user.id, dto.bvn);
+  }
+
+  @Get('bvn')
+  @ApiOperation({
+    summary:
+      'Masked snapshot of the caller`s BVN. Returns { last4, updatedAt } or null when not yet provided.',
+  })
+  async getBvn(@CurrentUser() user: User) {
+    return this.service.getBvnSnapshot(user.id);
   }
 }

@@ -88,6 +88,11 @@ class UpdateMapsSettingsDto {
   apiKey?: string;
 }
 
+class UpdateAllowedIdTypesDto {
+  @IsString({ each: true })
+  allowed!: string[];
+}
+
 class UpdatePricingSettingsDto {
   @IsOptional()
   @IsNumber()
@@ -317,6 +322,39 @@ export class ConfigController {
       dataType: 'string',
     });
     return this.getMapsSettings();
+  }
+
+  @Get('allowed-id-types')
+  @ApiOperation({
+    summary:
+      'DR-NEW — allowed DocumentType slugs for the driver ID picker. Any authenticated user reads this (the customer mobile picker bootstraps from it).',
+  })
+  async getAllowedIdTypes(): Promise<{ allowed: string[] }> {
+    const value = await this.configService.get<string[]>(
+      ConfigKey.ALLOWED_DRIVER_ID_TYPES,
+      ['nin', 'drivers_license', 'passport', 'voters_card'],
+    );
+    return { allowed: Array.isArray(value) ? value : [] };
+  }
+
+  @Put('allowed-id-types')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary:
+      'Set the allowed DocumentType slugs for the driver ID picker (Admin only).',
+  })
+  async updateAllowedIdTypes(
+    @Body() dto: UpdateAllowedIdTypesDto,
+  ): Promise<{ allowed: string[] }> {
+    const sanitized = Array.from(
+      new Set(dto.allowed.map((s) => s.trim()).filter(Boolean)),
+    );
+    await this.configService.update(ConfigKey.ALLOWED_DRIVER_ID_TYPES, {
+      key: ConfigKey.ALLOWED_DRIVER_ID_TYPES,
+      value: JSON.stringify(sanitized),
+      dataType: 'json',
+    });
+    return { allowed: sanitized };
   }
 
   @Get('support-info')

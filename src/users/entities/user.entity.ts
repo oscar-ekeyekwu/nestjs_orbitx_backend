@@ -75,6 +75,34 @@ export class User {
   @Column({ type: 'timestamp with time zone', nullable: true })
   pseudonymizedAt: Date | null;
 
+  // DR-NEW — Bank Verification Number (BVN) collected during driver
+  // KYC. Encrypted at rest with AES-256-GCM via StorageCryptoService
+  // (same KEK + cipher/nonce/tag pattern as storage-provider secrets).
+  // Plaintext never persists; admins see `bvnLast4` masked behind
+  // `•••••••` and can request a one-shot decrypt for verification.
+  @Column({ type: 'bytea', nullable: true })
+  @Exclude()
+  bvnCipher: Buffer | null;
+
+  @Column({ type: 'bytea', nullable: true })
+  @Exclude()
+  bvnNonce: Buffer | null;
+
+  @Column({ type: 'bytea', nullable: true })
+  @Exclude()
+  bvnTag: Buffer | null;
+
+  @Column({ type: 'smallint', nullable: true })
+  bvnKeyVersion: number | null;
+
+  // Last 4 digits cached for masked display ("•••••••1234"). Cheap
+  // join-free lookup for the admin driver-detail page.
+  @Column({ type: 'varchar', length: 4, nullable: true })
+  bvnLast4: string | null;
+
+  @Column({ type: 'timestamp with time zone', nullable: true })
+  bvnUpdatedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

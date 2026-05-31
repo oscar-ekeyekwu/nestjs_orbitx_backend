@@ -6,6 +6,7 @@ import { Order } from '../orders/entities/order.entity';
 import { Transaction } from '../wallet/entities/transaction.entity';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import { User } from '../users/entities/user.entity';
+import { StorageCryptoService } from '../storage/crypto.service';
 import { MeController } from './me.controller';
 import { MeCron } from './me.cron';
 import { MeService } from './me.service';
@@ -22,7 +23,7 @@ import { MeService } from './me.service';
     ApprovalsModule,
   ],
   controllers: [MeController],
-  providers: [MeService, MeCron],
+  providers: [MeService, MeCron, StorageCryptoService],
   exports: [MeService],
 })
 export class MeModule {}
