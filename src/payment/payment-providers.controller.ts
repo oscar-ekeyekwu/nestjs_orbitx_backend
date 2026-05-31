@@ -55,10 +55,7 @@ export class PaymentProvidersController {
     summary:
       'Create a new payment provider row. Encrypts the plaintext secretKey before persist.',
   })
-  create(
-    @CurrentUser() user: User,
-    @Body() dto: CreatePaymentProviderDto,
-  ) {
+  create(@CurrentUser() user: User, @Body() dto: CreatePaymentProviderDto) {
     return this.service.create(dto, user.id);
   }
 
@@ -93,10 +90,7 @@ export class PaymentProvidersController {
     summary:
       'Point system_configs.payment.activeProviderId at this row. New checkouts use these credentials immediately.',
   })
-  activate(
-    @CurrentUser() user: User,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
+  activate(@CurrentUser() user: User, @Param('id', ParseUUIDPipe) id: string) {
     return this.service.activate(id, user.id);
   }
 

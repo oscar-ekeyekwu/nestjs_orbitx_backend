@@ -173,7 +173,7 @@ describe('PushFanoutService (ARCH-10)', () => {
 
     beforeEach(() => {
       expoMock = {
-        chunkPushNotifications: jest.fn((msgs) => [msgs]),
+        chunkPushNotifications: jest.fn((msgs: unknown[]) => [msgs]),
         sendPushNotificationsAsync: jest.fn(),
       } as unknown as jest.Mocked<ExpoPushLike>;
       dualService = new PushFanoutService(repo, messaging, expoMock);

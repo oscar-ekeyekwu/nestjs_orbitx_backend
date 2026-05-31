@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access --
- * jest mock introspection rules. */
 import {
   BadRequestException,
   ForbiddenException,
@@ -13,15 +11,8 @@ import {
   OrderStatus,
   PackageSize,
 } from './entities/order.entity';
-import { ConfigKey } from '../config/enums/config-keys.enum';
-import {
-  PaymentMethod,
-  Transaction,
-  TransactionStatus,
-  TransactionType,
-} from '../wallet/entities/transaction.entity';
-import { Wallet } from '../wallet/entities/wallet.entity';
-import { NAIRA_ZERO, naira } from '../common/money';
+import { PaymentMethod } from '../wallet/entities/transaction.entity';
+import { naira } from '../common/money';
 
 function buildOrder(overrides: Partial<Order> = {}): Order {
   return {
@@ -38,28 +29,24 @@ function buildOrder(overrides: Partial<Order> = {}): Order {
   } as Order;
 }
 
-function buildWallet(overrides: Partial<Wallet> = {}): Wallet {
-  return {
-    id: 'wallet-driver',
-    userId: 'driver-1',
-    balance: NAIRA_ZERO,
-    totalEarnings: NAIRA_ZERO,
-    ...overrides,
-  } as Wallet;
-}
-
-describe('OrdersService.markCashCollected (G2)', () => {
+/**
+ * Cash-only model: markCashCollected no longer touches the wallet. The
+ * driver collected and keeps the cash; the platform already held its
+ * per-order charge at acceptance. So this method only flips the payment
+ * status to COMPLETED and stamps finalPrice — no commission split, no
+ * wallet credit, no settlement Transaction row.
+ */
+describe('OrdersService.markCashCollected', () => {
   let service: OrdersService;
-  let configService: { getNumber: jest.Mock };
   let dataSource: { transaction: jest.Mock };
   let manager: {
     findOne: jest.Mock;
     save: jest.Mock;
     insert: jest.Mock;
   };
+  let walletService: { applyCommission: jest.Mock };
 
   beforeEach(() => {
-    configService = { getNumber: jest.fn().mockResolvedValue(20) };
     manager = {
       findOne: jest.fn(),
       save: jest.fn((e: unknown) => Promise.resolve(e)),
@@ -72,39 +59,13 @@ describe('OrdersService.markCashCollected (G2)', () => {
         Promise.resolve(cb(manager as unknown as EntityManager)),
       ),
     };
-
-    // G5 — walletService stub. applyCommission(grossFee, override?) is
-    // the only call markCashCollected makes. The stub reads the same
-    // configService.getNumber the legacy tests already mock so the
-    // existing commission expectations stay valid.
-    type NairaLike = import('../common/money').Naira;
-    const walletService = {
-      applyCommission: jest.fn(
-        async (
-          grossFee: NairaLike,
-          override?: number,
-        ): Promise<{
-          driverShare: NairaLike;
-          commission: NairaLike;
-          commissionPct: number;
-        }> => {
-          const pct: number =
-            override ??
-            ((await configService.getNumber(
-              'DRIVER_COMMISSION_PERCENTAGE',
-              0,
-            )) as number);
-          const commission = grossFee.times(pct).dividedBy(100) as NairaLike;
-          const driverShare = grossFee.minus(commission) as NairaLike;
-          return { driverShare, commission, commissionPct: pct };
-        },
-      ),
-    };
+    // Spy so we can assert it is NOT called on the cash path.
+    walletService = { applyCommission: jest.fn() };
 
     service = new OrdersService(
       {} as unknown as Repository<Order>,
       walletService as never,
-      configService as never,
+      {} as never,
       {} as never,
       {} as never,
       { emit: jest.fn() } as never,
@@ -113,105 +74,44 @@ describe('OrdersService.markCashCollected (G2)', () => {
     );
   });
 
-  it('credits the driver wallet net of commission + inserts a cash transaction', async () => {
+  it('marks payment COMPLETED without crediting the wallet or splitting commission', async () => {
     const order = buildOrder();
-    const wallet = buildWallet();
-    manager.findOne.mockResolvedValueOnce(order).mockResolvedValueOnce(wallet);
+    manager.findOne.mockResolvedValueOnce(order);
 
     const result = await service.markCashCollected('order-1', 'driver-1');
 
-    // 20% commission on ₦1000 = ₦200 → driver share = ₦800.
-    expect(wallet.balance.toString()).toBe('800');
-    expect(wallet.totalEarnings.toString()).toBe('800');
     expect(result.paymentStatus).toBe(OrderPaymentStatus.COMPLETED);
     expect(result.finalPrice?.toString()).toBe('1000');
-
-    // Exactly one Transaction row with method=cash + commission recorded.
-    expect(manager.insert).toHaveBeenCalledWith(
-      Transaction,
-      expect.objectContaining({
-        type: TransactionType.CREDIT,
-        paymentMethod: PaymentMethod.CASH,
-        status: TransactionStatus.COMPLETED,
-        orderId: 'order-1',
-      }),
-    );
-    const inserted = manager.insert.mock.calls[0][1] as {
-      amount: { toString(): string };
-      commission: { toString(): string };
-      balanceAfter: { toString(): string };
-    };
-    expect(inserted.amount.toString()).toBe('800');
-    expect(inserted.commission.toString()).toBe('200');
-    expect(inserted.balanceAfter.toString()).toBe('800');
+    // No settlement transaction, no commission split, no wallet lookup.
+    expect(manager.insert).not.toHaveBeenCalled();
+    expect(walletService.applyCommission).not.toHaveBeenCalled();
+    // Only the order row is saved (no wallet save).
+    expect(manager.save).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to estimatedPrice when finalPrice is unset, then writes finalPrice', async () => {
+  it('falls back to estimatedPrice when finalPrice is unset', async () => {
     const order = buildOrder({
       estimatedPrice: naira('1500'),
       finalPrice: null,
     });
-    manager.findOne
-      .mockResolvedValueOnce(order)
-      .mockResolvedValueOnce(buildWallet());
+    manager.findOne.mockResolvedValueOnce(order);
 
     const result = await service.markCashCollected('order-1', 'driver-1');
     expect(result.finalPrice?.toString()).toBe('1500');
   });
 
-  it('uses finalPrice when present (overrides estimate)', async () => {
+  it('keeps finalPrice when already present', async () => {
     const order = buildOrder({
       estimatedPrice: naira('1500'),
       finalPrice: naira('1800'),
     });
-    const wallet = buildWallet();
-    manager.findOne.mockResolvedValueOnce(order).mockResolvedValueOnce(wallet);
+    manager.findOne.mockResolvedValueOnce(order);
 
-    await service.markCashCollected('order-1', 'driver-1');
-    // 20% of ₦1800 = ₦360 → driver gets ₦1440.
-    expect(wallet.balance.toString()).toBe('1440');
+    const result = await service.markCashCollected('order-1', 'driver-1');
+    expect(result.finalPrice?.toString()).toBe('1800');
   });
 
-  it('debits the order.insuranceFee from the driver credit', async () => {
-    const order = buildOrder({ insuranceFee: naira('50') });
-    const wallet = buildWallet();
-    manager.findOne.mockResolvedValueOnce(order).mockResolvedValueOnce(wallet);
-
-    await service.markCashCollected('order-1', 'driver-1');
-
-    // ₦1000 fee, 20% commission = ₦200 → share ₦800 → minus ₦50
-    // insurance = ₦750 net credit to the driver wallet.
-    expect(wallet.balance.toString()).toBe('750');
-    expect(wallet.totalEarnings.toString()).toBe('750');
-
-    const inserted = manager.insert.mock.calls[0][1] as {
-      amount: { toString(): string };
-      commission: { toString(): string };
-      description: string;
-    };
-    expect(inserted.amount.toString()).toBe('750');
-    expect(inserted.commission.toString()).toBe('200');
-    expect(inserted.description).toContain('₦50 insurance');
-  });
-
-  it('caps insurance at the driver share when misconfigured (no negative credit)', async () => {
-    // Order priced ₦1000, 20% commission leaves ₦800 share. Admin
-    // sets insurance to ₦1500 — capped to ₦800 so the credit is ₦0,
-    // never negative.
-    const order = buildOrder({ insuranceFee: naira('1500') });
-    const wallet = buildWallet();
-    manager.findOne.mockResolvedValueOnce(order).mockResolvedValueOnce(wallet);
-
-    await service.markCashCollected('order-1', 'driver-1');
-
-    expect(wallet.balance.toString()).toBe('0');
-    const inserted = manager.insert.mock.calls[0][1] as {
-      amount: { toString(): string };
-    };
-    expect(inserted.amount.toString()).toBe('0');
-  });
-
-  it('is idempotent — second call on a COMPLETED row returns the order untouched', async () => {
+  it('is idempotent — second call on a COMPLETED row returns it untouched', async () => {
     const order = buildOrder({
       paymentStatus: OrderPaymentStatus.COMPLETED,
       finalPrice: naira('1000'),
@@ -222,6 +122,7 @@ describe('OrdersService.markCashCollected (G2)', () => {
 
     expect(result.paymentStatus).toBe(OrderPaymentStatus.COMPLETED);
     expect(manager.insert).not.toHaveBeenCalled();
+    expect(manager.save).not.toHaveBeenCalled();
   });
 
   it('rejects a non-driver caller', async () => {
@@ -258,39 +159,5 @@ describe('OrdersService.markCashCollected (G2)', () => {
     await expect(
       service.markCashCollected('order-1', 'driver-1'),
     ).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('404s when the driver has no wallet provisioned', async () => {
-    manager.findOne
-      .mockResolvedValueOnce(buildOrder())
-      .mockResolvedValueOnce(null);
-
-    await expect(
-      service.markCashCollected('order-1', 'driver-1'),
-    ).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('reads commission percent from system_config', async () => {
-    manager.findOne
-      .mockResolvedValueOnce(buildOrder())
-      .mockResolvedValueOnce(buildWallet());
-
-    await service.markCashCollected('order-1', 'driver-1');
-
-    expect(configService.getNumber).toHaveBeenCalledWith(
-      ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
-      0,
-    );
-  });
-
-  it('handles a zero-commission config — driver gets the full fee', async () => {
-    configService.getNumber.mockResolvedValueOnce(0);
-    const wallet = buildWallet();
-    manager.findOne
-      .mockResolvedValueOnce(buildOrder({ finalPrice: naira('1000') }))
-      .mockResolvedValueOnce(wallet);
-
-    await service.markCashCollected('order-1', 'driver-1');
-    expect(wallet.balance.toString()).toBe('1000');
   });
 });

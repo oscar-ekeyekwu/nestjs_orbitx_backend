@@ -15,6 +15,10 @@ import {
   DriverProfile,
   DriverVerificationStatus,
 } from '../drivers/entities/driver-profile.entity';
+import { Wallet } from '../wallet/entities/wallet.entity';
+import { SystemConfigService } from '../config/config.service';
+import { ConfigKey } from '../config/enums/config-keys.enum';
+import { haversineKm } from '../common/geo';
 
 // I6 — payload shape published by IncidentsService.
 export interface IncidentRaisedEvent {
@@ -69,6 +73,10 @@ export interface OrderCreatedEvent {
   pickupAddress: string;
   deliveryAddress: string;
   estimatedPriceNaira: number;
+  // Proximity + balance dispatch inputs.
+  pickupLatitude: number;
+  pickupLongitude: number;
+  platformChargeNaira: number;
 }
 
 /**
@@ -91,6 +99,9 @@ export class PushFanoutEventSubscribers {
     private readonly users: Repository<User>,
     @InjectRepository(DriverProfile)
     private readonly driverProfiles: Repository<DriverProfile>,
+    @InjectRepository(Wallet)
+    private readonly wallets: Repository<Wallet>,
+    private readonly config: SystemConfigService,
   ) {}
 
   // ────────────────────────────────── C4 expiry cron events
@@ -197,39 +208,65 @@ export class PushFanoutEventSubscribers {
   // ────────────────────────────────── Order broadcast events
   @OnEvent('order.created')
   async onOrderCreated(event: OrderCreatedEvent): Promise<void> {
-    // Find every driver who's marked themselves online + verification
-    // is active. Socket broadcasts only reach drivers with the app
-    // foregrounded; push closes that gap. The current driver-side
-    // check on the mobile filters orders out by radius / busy state,
-    // so an over-broad notification fanout is preferable to a
-    // narrow miss.
-    const drivers = await this.driverProfiles.find({
-      where: {
-        isOnline: true,
-        verificationStatus: DriverVerificationStatus.ACTIVE,
-        isOnDelivery: false,
-      },
-      select: ['userId'],
-    });
-    if (drivers.length === 0) {
-      // Self-debug aid: also count online drivers without the
-      // isOnDelivery gate so the operator can tell whether the filter
-      // is the killer or there genuinely are no online drivers.
-      const onlineCount = await this.driverProfiles.count({
-        where: {
-          isOnline: true,
-          verificationStatus: DriverVerificationStatus.ACTIVE,
-        },
-      });
+    // Proximity + balance dispatch. Notify only online/active/idle drivers
+    // who (a) have a known location within ORDER_DELIVERY_RADIUS_KM of the
+    // pickup and (b) hold enough wallet balance to cover the order's
+    // platform charge. The SQL narrows by the gates we can express in the
+    // DB (online/active/idle, balance, non-null coords); the radius is
+    // applied in memory against the already-small candidate set. Drivers
+    // with no known location are SKIPPED — we can't proximity-filter them,
+    // and including everyone would defeat the purpose of this fix.
+    const radiusKm = await this.config.getNumber(
+      ConfigKey.ORDER_DELIVERY_RADIUS_KM,
+      50,
+    );
+
+    const candidates: Array<{
+      userId: string;
+      currentLatitude: string | number;
+      currentLongitude: string | number;
+    }> = await this.driverProfiles
+      .createQueryBuilder('dp')
+      .innerJoin(Wallet, 'w', 'w."userId" = dp."userId"')
+      .where('dp."isOnline" = true')
+      .andWhere('dp."verificationStatus" = :status', {
+        status: DriverVerificationStatus.ACTIVE,
+      })
+      .andWhere('dp."isOnDelivery" = false')
+      .andWhere('dp."currentLatitude" IS NOT NULL')
+      .andWhere('dp."currentLongitude" IS NOT NULL')
+      .andWhere('w."balance" >= :charge', {
+        charge: event.platformChargeNaira,
+      })
+      .select([
+        'dp."userId" AS "userId"',
+        'dp."currentLatitude" AS "currentLatitude"',
+        'dp."currentLongitude" AS "currentLongitude"',
+      ])
+      .getRawMany();
+
+    const nearby = candidates.filter(
+      (d) =>
+        haversineKm(
+          event.pickupLatitude,
+          event.pickupLongitude,
+          Number(d.currentLatitude),
+          Number(d.currentLongitude),
+        ) <= radiusKm,
+    );
+
+    if (nearby.length === 0) {
       this.logger.warn(
         `order.created ${event.orderId} packageSize=${event.packageSize} — no eligible drivers ` +
-          `(isOnline+ACTIVE+!isOnDelivery). isOnline+ACTIVE without the isOnDelivery gate: ${onlineCount}. ` +
-          `Check driver_profiles.isOnline / verificationStatus / isOnDelivery.`,
+          `(online+ACTIVE+!isOnDelivery, within ${radiusKm}km of pickup, balance >= ₦${event.platformChargeNaira}). ` +
+          `${candidates.length} matched the balance+status gate but none were within radius. ` +
+          `Check driver_profiles location/online state and DRIVER_CHARGE_* config.`,
       );
       return;
     }
     this.logger.log(
-      `order.created ${event.orderId} packageSize=${event.packageSize} → fanning out push to ${drivers.length} eligible driver(s).`,
+      `order.created ${event.orderId} packageSize=${event.packageSize} → fanning out push to ${nearby.length} ` +
+        `nearby, funded driver(s) (within ${radiusKm}km, balance >= ₦${event.platformChargeNaira}).`,
     );
     const priceText = `₦${Number(event.estimatedPriceNaira).toLocaleString(
       'en-NG',
@@ -244,9 +281,10 @@ export class PushFanoutEventSubscribers {
         kind: 'order.created',
         orderId: event.orderId,
         packageSize: event.packageSize,
+        platformChargeNaira: String(event.platformChargeNaira),
       },
     };
-    for (const driver of drivers) {
+    for (const driver of nearby) {
       void this.fanout.send(driver.userId, payload);
     }
   }

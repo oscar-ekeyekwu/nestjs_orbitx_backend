@@ -11,7 +11,8 @@ import { ApiProperty } from '@nestjs/swagger';
 export class TestFundByAccountDto {
   @ApiProperty({
     example: '1234567890',
-    description: 'Virtual account number to credit (looked up in virtual_accounts).',
+    description:
+      'Virtual account number to credit (looked up in virtual_accounts).',
   })
   @IsString()
   @Length(8, 20)

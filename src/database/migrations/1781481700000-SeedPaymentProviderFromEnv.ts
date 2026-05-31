@@ -31,11 +31,9 @@ export class SeedPaymentProviderFromEnv1781481700000
 
     const secretKey = process.env.PAYSTACK_SECRET_KEY ?? '';
     const publicKey = process.env.PAYSTACK_PUBLIC_KEY ?? null;
-    const baseUrl =
-      process.env.PAYSTACK_BASE_URL ?? 'https://api.paystack.co';
+    const baseUrl = process.env.PAYSTACK_BASE_URL ?? 'https://api.paystack.co';
 
     if (!secretKey) {
-      // eslint-disable-next-line no-console
       console.log(
         '[PAY-1] PAYSTACK_SECRET_KEY not set — skipping bootstrap seed. ' +
           'Create the first payment provider via the admin UI ' +
