@@ -28,8 +28,8 @@ function buildPendingOrder(overrides: Partial<Order> = {}): Order {
 describe('OrdersService.acceptOrder (ARCH-12 first-accept lock)', () => {
   let ordersRepo: jest.Mocked<Repository<Order>>;
   let walletService: {
-    canDriverTakeOrder: jest.Mock;
-    deductSecurityDeposit: jest.Mock;
+    canDriverCoverCharge: jest.Mock;
+    holdOrderCharge: jest.Mock;
   };
   let configService: { getNumber: jest.Mock };
   let realtimeGateway: {
@@ -53,8 +53,8 @@ describe('OrdersService.acceptOrder (ARCH-12 first-accept lock)', () => {
     } as unknown as jest.Mocked<Repository<Order>>;
 
     walletService = {
-      canDriverTakeOrder: jest.fn().mockResolvedValue(true),
-      deductSecurityDeposit: jest.fn().mockResolvedValue(undefined),
+      canDriverCoverCharge: jest.fn().mockResolvedValue(true),
+      holdOrderCharge: jest.fn().mockResolvedValue(undefined),
     };
     configService = { getNumber: jest.fn().mockResolvedValue(0) };
     realtimeGateway = {
@@ -127,9 +127,10 @@ describe('OrdersService.acceptOrder (ARCH-12 first-accept lock)', () => {
     expect(result).toBeDefined();
     expect(sharedOrder.status).toBe(OrderStatus.ACCEPTED);
     expect(sharedOrder.driverId).toBe('driver-1');
-    expect(walletService.deductSecurityDeposit).toHaveBeenCalledWith(
+    expect(walletService.holdOrderCharge).toHaveBeenCalledWith(
       'driver-1',
       'order-1',
+      expect.anything(),
     );
     expect(realtimeGateway.emitOrderTaken).toHaveBeenCalledWith(
       PackageSize.MEDIUM,
@@ -152,22 +153,23 @@ describe('OrdersService.acceptOrder (ARCH-12 first-accept lock)', () => {
     }
     expect(caught).toBeInstanceOf(BadRequestException);
     expect(extractErrorCode(caught)).toBe(ErrorCodes.ORDER_004);
-    // Loser must NOT have been charged the deposit.
-    expect(walletService.deductSecurityDeposit).toHaveBeenCalledTimes(1);
-    expect(walletService.deductSecurityDeposit).toHaveBeenCalledWith(
+    // Loser must NOT have been charged.
+    expect(walletService.holdOrderCharge).toHaveBeenCalledTimes(1);
+    expect(walletService.holdOrderCharge).toHaveBeenCalledWith(
       'driver-1',
       'order-1',
+      expect.anything(),
     );
   });
 
   it('insufficient balance rejects BEFORE the lock — no transaction opened', async () => {
-    walletService.canDriverTakeOrder.mockResolvedValueOnce(false);
-    configService.getNumber.mockResolvedValueOnce(500);
+    walletService.canDriverCoverCharge.mockResolvedValueOnce(false);
 
     await expect(
       service.acceptOrder('order-1', 'broke-driver'),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(walletService.holdOrderCharge).not.toHaveBeenCalled();
   });
 
   it('404 path: missing order surfaces NotFoundException inside the lock', async () => {

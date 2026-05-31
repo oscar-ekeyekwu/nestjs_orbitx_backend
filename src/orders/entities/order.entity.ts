@@ -176,6 +176,20 @@ export class Order {
   })
   insuranceFee: Naira | null;
 
+  // Per-order platform charge captured at order-create time from the
+  // DRIVER_CHARGE_* config (flat, or percentage-of-price capped). Stored
+  // here so retroactive config changes never rewrite historical holds.
+  // Held (DEBIT) from the driver's prepaid wallet when they ACCEPT the
+  // order; refunded on cancellation; kept by the platform on delivery.
+  // Also gates visibility — drivers below this amount don't see the order.
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    nullable: true,
+    transformer: nairaTransformer,
+  })
+  platformCharge: Naira | null;
+
   // G2 — chosen payment channel (defaults to cash since v0 implicitly
   // assumed cash on delivery). Updated server-side from CreateOrderDto.
   @Column({

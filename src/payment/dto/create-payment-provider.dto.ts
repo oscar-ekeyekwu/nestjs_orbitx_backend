@@ -60,7 +60,9 @@ export class CreatePaymentProviderDto {
   @MaxLength(64)
   preferredBank?: string;
 
-  @ApiProperty({ description: 'Plaintext secret key — encrypted before persist.' })
+  @ApiProperty({
+    description: 'Plaintext secret key — encrypted before persist.',
+  })
   @IsString()
   @MinLength(8)
   secretKey: string;

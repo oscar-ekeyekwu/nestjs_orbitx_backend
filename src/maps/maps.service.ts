@@ -200,7 +200,11 @@ export class MapsService {
     const url = `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`;
     const data = await this.fetchJson(url, 'reverseGeocode');
 
-    if (data.status !== 'OK' || !Array.isArray(data.results) || data.results.length === 0) {
+    if (
+      data.status !== 'OK' ||
+      !Array.isArray(data.results) ||
+      data.results.length === 0
+    ) {
       if (data.status !== 'ZERO_RESULTS') {
         this.logger.warn(
           `Reverse geocode returned status=${data.status} for ${latitude},${longitude}`,

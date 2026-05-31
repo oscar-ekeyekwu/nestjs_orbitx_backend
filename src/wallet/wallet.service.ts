@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
@@ -34,6 +35,8 @@ export interface CommissionSplit {
 
 @Injectable()
 export class WalletService {
+  private readonly logger = new Logger(WalletService.name);
+
   constructor(
     @InjectRepository(Wallet)
     private walletRepository: Repository<Wallet>,
@@ -76,6 +79,81 @@ export class WalletService {
     const commission = grossFee.times(pct).dividedBy(100) as Naira;
     const driverShare = grossFee.minus(commission) as Naira;
     return { driverShare, commission, commissionPct: pct };
+  }
+
+  /**
+   * Compute the per-order platform charge held from the driver's prepaid
+   * wallet on acceptance. Single source of truth for the charge so the
+   * order-create snapshot, the visibility gate and the hold all agree.
+   *
+   * Mode switch (DRIVER_CHARGE_MODE):
+   *   - 'percentage' → DRIVER_CHARGE_PERCENTAGE of the order price, capped
+   *     by DRIVER_CHARGE_CAP when that cap is > 0.
+   *   - 'flat' (or any unknown value) → DRIVER_CHARGE_FLAT.
+   *
+   * Runs on the order-create hot path, so config tampering is CLAMPED and
+   * logged rather than thrown — a misconfigured rate must never 500 a
+   * customer's create-order call.
+   *
+   * Edge cases:
+   *   - charge 0 is allowed (free order; the balance gate passes trivially).
+   *   - the charge MAY exceed the order price — it is wallet-funded platform
+   *     revenue, independent of the cash the customer hands the driver, so
+   *     it is intentionally not clamped to the price.
+   *   - never negative.
+   */
+  async computeOrderCharge(orderPrice: Naira): Promise<Naira> {
+    const mode = (
+      await this.configService.getString(ConfigKey.DRIVER_CHARGE_MODE, 'flat')
+    )
+      .trim()
+      .toLowerCase();
+
+    if (mode === 'percentage') {
+      let pct = await this.configService.getNumber(
+        ConfigKey.DRIVER_CHARGE_PERCENTAGE,
+        0,
+      );
+      if (!Number.isFinite(pct) || pct < 0) {
+        this.logger.warn(
+          `DRIVER_CHARGE_PERCENTAGE is ${pct}; clamping to 0. Review config.`,
+        );
+        pct = 0;
+      } else if (pct > 100) {
+        this.logger.warn(
+          `DRIVER_CHARGE_PERCENTAGE is ${pct}; clamping to 100. Review config.`,
+        );
+        pct = 100;
+      }
+      // Whole-Naira charge (HALF_UP via decimal.js default rounding).
+      let charge = naira(orderPrice.times(pct).dividedBy(100).toFixed(0));
+
+      const cap = await this.configService.getNumber(
+        ConfigKey.DRIVER_CHARGE_CAP,
+        0,
+      );
+      if (Number.isFinite(cap) && cap > 0) {
+        const capNaira = naira(String(cap));
+        if (charge.greaterThan(capNaira)) {
+          charge = capNaira;
+        }
+      }
+      return charge;
+    }
+
+    // Flat mode (default). Unknown mode values fall through to flat so a
+    // typo in config can't make orders free or crash the create path.
+    const flat = await this.configService.getNumber(
+      ConfigKey.DRIVER_CHARGE_FLAT,
+      0,
+    );
+    if (!Number.isFinite(flat) || flat < 0) {
+      this.logger.warn(
+        `DRIVER_CHARGE_FLAT is ${flat}; treating as 0. Review config.`,
+      );
+      return NAIRA_ZERO;
+    }
+    return naira(String(flat));
   }
 
   /**
@@ -136,6 +214,16 @@ export class WalletService {
     );
 
     return wallet.balance.greaterThanOrEqualTo(minBalance);
+  }
+
+  /**
+   * Per-order balance gate: can this driver cover the given order charge?
+   * Replaces the static min-balance check on the accept path so a driver
+   * is gated against the specific order's charge, not a flat threshold.
+   */
+  async canDriverCoverCharge(userId: string, charge: Naira): Promise<boolean> {
+    const wallet = await this.getWalletByUserId(userId);
+    return wallet.balance.greaterThanOrEqualTo(charge);
   }
 
   /**
@@ -396,12 +484,26 @@ export class WalletService {
   }
 
   /**
-   * Deduct security deposit when driver accepts an order
+   * Hold the per-order platform charge from the driver's prepaid wallet
+   * when they accept an order. Debits the exact `amount` (the order's
+   * snapshotted platformCharge) — NOT the static min balance.
+   *
+   *   - amount <= 0 → no-op (no wallet write, no ₦0 transaction row).
+   *   - insufficient balance → BadRequestException (own pessimistic_write
+   *     re-check is the concurrency backstop for the accept path's
+   *     pre-lock gate).
+   *
+   * Returns the inserted DEBIT transaction, or null when amount <= 0.
    */
-  async deductSecurityDeposit(
+  async holdOrderCharge(
     userId: string,
     orderId: string,
-  ): Promise<Transaction> {
+    amount: Naira,
+  ): Promise<Transaction | null> {
+    if (amount.lessThanOrEqualTo(NAIRA_ZERO)) {
+      return null;
+    }
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -420,20 +522,13 @@ export class WalletService {
         throw new ForbiddenException('Wallet is locked');
       }
 
-      const minBalance = await this.configService.getNumber(
-        ConfigKey.DRIVER_MIN_BALANCE,
-        0,
-      );
-
-      const minBalanceNaira = naira(String(minBalance));
-
-      if (wallet.balance.lessThan(minBalanceNaira)) {
+      if (wallet.balance.lessThan(amount)) {
         throw new BadRequestException(
-          `Insufficient balance. Minimum balance of ₦${minBalance} required`,
+          `Insufficient wallet balance. ₦${amount.toString()} required to cover this order's charge.`,
         );
       }
 
-      const newBalance = wallet.balance.minus(minBalanceNaira) as Naira;
+      const newBalance = wallet.balance.minus(amount) as Naira;
       wallet.balance = newBalance;
 
       await queryRunner.manager.save(wallet);
@@ -442,12 +537,12 @@ export class WalletService {
         walletId: wallet.id,
         orderId,
         type: TransactionType.DEBIT,
-        amount: minBalanceNaira,
+        amount,
         balanceAfter: newBalance,
         status: TransactionStatus.COMPLETED,
         paymentMethod: PaymentMethod.WALLET,
-        description: `Security deposit for order ${orderId}`,
-        metadata: { type: 'security_deposit', orderId },
+        description: `Order charge hold for order ${orderId}`,
+        metadata: { type: 'order_charge_hold', orderId },
       });
 
       const savedTransaction = await queryRunner.manager.save(transaction);
@@ -464,12 +559,24 @@ export class WalletService {
   }
 
   /**
-   * Refund security deposit when order is delivered or cancelled
+   * Refund a held order charge when an accepted order is cancelled.
+   * Credits the exact `amount` back to the driver's wallet.
+   *
+   *   - amount <= 0 → no-op.
+   *   - idempotent: skips if an `order_charge_refund` CREDIT row already
+   *     exists for this order (guards a retried/replayed cancel).
+   *
+   * Returns the inserted CREDIT transaction, or null when nothing was done.
    */
-  async refundSecurityDeposit(
+  async refundOrderCharge(
     userId: string,
     orderId: string,
-  ): Promise<Transaction> {
+    amount: Naira,
+  ): Promise<Transaction | null> {
+    if (amount.lessThanOrEqualTo(NAIRA_ZERO)) {
+      return null;
+    }
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -484,13 +591,21 @@ export class WalletService {
         throw new NotFoundException('Wallet not found');
       }
 
-      const minBalance = await this.configService.getNumber(
-        ConfigKey.DRIVER_MIN_BALANCE,
-        0,
-      );
+      // Idempotency guard: don't double-refund the same order.
+      const existingRefund = await queryRunner.manager
+        .createQueryBuilder(Transaction, 'txn')
+        .where('txn.walletId = :walletId', { walletId: wallet.id })
+        .andWhere('txn.orderId = :orderId', { orderId })
+        .andWhere("txn.metadata->>'type' = :type", {
+          type: 'order_charge_refund',
+        })
+        .getOne();
+      if (existingRefund) {
+        await queryRunner.commitTransaction();
+        return existingRefund;
+      }
 
-      const refundAmount = naira(String(minBalance));
-      const newBalance = wallet.balance.plus(refundAmount) as Naira;
+      const newBalance = wallet.balance.plus(amount) as Naira;
       wallet.balance = newBalance;
 
       await queryRunner.manager.save(wallet);
@@ -499,12 +614,12 @@ export class WalletService {
         walletId: wallet.id,
         orderId,
         type: TransactionType.CREDIT,
-        amount: refundAmount,
+        amount,
         balanceAfter: newBalance,
         status: TransactionStatus.COMPLETED,
         paymentMethod: PaymentMethod.WALLET,
-        description: `Security deposit refund for order ${orderId}`,
-        metadata: { type: 'security_deposit_refund', orderId },
+        description: `Order charge refund for order ${orderId}`,
+        metadata: { type: 'order_charge_refund', orderId },
       });
 
       const savedTransaction = await queryRunner.manager.save(transaction);

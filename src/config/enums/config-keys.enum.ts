@@ -3,6 +3,18 @@ export enum ConfigKey {
   DRIVER_MIN_BALANCE = 'DRIVER_MIN_BALANCE',
   DRIVER_COMMISSION_PERCENTAGE = 'DRIVER_COMMISSION_PERCENTAGE',
 
+  // Per-order platform charge (the platform's revenue). Customers pay the
+  // driver cash directly and the driver keeps it; the platform instead
+  // debits this charge from the driver's prepaid wallet when the driver
+  // ACCEPTS an order. Mode switch: 'flat' debits DRIVER_CHARGE_FLAT;
+  // 'percentage' debits DRIVER_CHARGE_PERCENTAGE of the order price capped
+  // by DRIVER_CHARGE_CAP. A driver whose balance is below an order's charge
+  // cannot see or accept that order.
+  DRIVER_CHARGE_MODE = 'DRIVER_CHARGE_MODE',
+  DRIVER_CHARGE_FLAT = 'DRIVER_CHARGE_FLAT',
+  DRIVER_CHARGE_PERCENTAGE = 'DRIVER_CHARGE_PERCENTAGE',
+  DRIVER_CHARGE_CAP = 'DRIVER_CHARGE_CAP',
+
   // Order Settings
   ORDER_DELIVERY_RADIUS_KM = 'ORDER_DELIVERY_RADIUS_KM',
   ORDER_BASE_PRICE = 'ORDER_BASE_PRICE',
@@ -86,6 +98,30 @@ export const DEFAULT_CONFIG_VALUES: Record<
     value: '15',
     description:
       'Platform commission percentage taken from each completed order (G5). Stored on each transactions.commissionPct row at completion time so retroactive rate changes never rewrite historical splits.',
+    dataType: 'number',
+  },
+  [ConfigKey.DRIVER_CHARGE_MODE]: {
+    value: 'flat',
+    description:
+      "How the per-order platform charge is computed: 'flat' (fixed Naira from DRIVER_CHARGE_FLAT) or 'percentage' (DRIVER_CHARGE_PERCENTAGE of the order price, capped by DRIVER_CHARGE_CAP). The charge is held from the driver's prepaid wallet on acceptance.",
+    dataType: 'string',
+  },
+  [ConfigKey.DRIVER_CHARGE_FLAT]: {
+    value: '200',
+    description:
+      "Flat per-order charge (Naira) held from the driver's wallet on acceptance when DRIVER_CHARGE_MODE='flat'.",
+    dataType: 'number',
+  },
+  [ConfigKey.DRIVER_CHARGE_PERCENTAGE]: {
+    value: '10',
+    description:
+      "Per-order charge as a percentage (0–100) of the order price when DRIVER_CHARGE_MODE='percentage'. Capped by DRIVER_CHARGE_CAP.",
+    dataType: 'number',
+  },
+  [ConfigKey.DRIVER_CHARGE_CAP]: {
+    value: '0',
+    description:
+      "Maximum per-order charge (Naira) when DRIVER_CHARGE_MODE='percentage'. 0 disables the cap.",
     dataType: 'number',
   },
   [ConfigKey.ORDER_DELIVERY_RADIUS_KM]: {
@@ -198,7 +234,12 @@ export const DEFAULT_CONFIG_VALUES: Record<
     dataType: 'string',
   },
   [ConfigKey.ALLOWED_DRIVER_ID_TYPES]: {
-    value: JSON.stringify(['nin', 'drivers_license', 'passport', 'voters_card']),
+    value: JSON.stringify([
+      'nin',
+      'drivers_license',
+      'passport',
+      'voters_card',
+    ]),
     description:
       'JSON array of DocumentType slugs the customer mobile may offer in its driver ID picker. Admin-tunable from Settings → ID Document Types.',
     dataType: 'json',

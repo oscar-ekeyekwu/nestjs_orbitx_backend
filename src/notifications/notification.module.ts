@@ -15,8 +15,10 @@ import { DeviceToken } from './entities/device-token.entity';
 import { DeviceTokensService } from './device-tokens.service';
 import { DeviceTokensController } from './device-tokens.controller';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { SystemConfigModule } from '../config/config.module';
 import { User } from '../users/entities/user.entity';
 import { DriverProfile } from '../drivers/entities/driver-profile.entity';
+import { Wallet } from '../wallet/entities/wallet.entity';
 
 @Module({
   imports: [
@@ -30,8 +32,13 @@ import { DriverProfile } from '../drivers/entities/driver-profile.entity';
       // order.created push subscriber queries active+online drivers
       // so dispatches reach everyone whose app is in background.
       DriverProfile,
+      // order.created push subscriber joins wallets to gate recipients by
+      // whether their balance covers the order's platform charge.
+      Wallet,
     ]),
     RealtimeModule,
+    // SystemConfigService — order.created push reads ORDER_DELIVERY_RADIUS_KM.
+    SystemConfigModule,
   ],
   controllers: [
     NotificationsController,

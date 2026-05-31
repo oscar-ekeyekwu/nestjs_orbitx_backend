@@ -23,11 +23,15 @@ describe('PushFanoutEventSubscribers (ARCH-10)', () => {
       find: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<Repository<User>>;
     // order.created fans out to active+online drivers via this repo.
+    // (Proximity dispatch uses createQueryBuilder, exercised separately in
+    // push-fanout.order-created.spec.ts; the .find stub is unused here.)
     driverProfiles = { find: jest.fn().mockResolvedValue([]) };
     subs = new PushFanoutEventSubscribers(
       fanout,
       users,
       driverProfiles as never,
+      {} as never,
+      {} as never,
     );
   });
 

@@ -128,8 +128,7 @@ export class PaymentProvidersService {
     if (dto.preferredBank !== undefined) {
       // Treat empty string as a clear so the form can null it out
       // with a single text input.
-      row.preferredBank =
-        dto.preferredBank === '' ? null : dto.preferredBank;
+      row.preferredBank = dto.preferredBank === '' ? null : dto.preferredBank;
     }
     if (dto.enabled !== undefined) row.enabled = dto.enabled;
 
