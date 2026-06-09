@@ -37,6 +37,16 @@ export class DriversController {
     return this.driversService.findPendingForAdmin({ limit, offset });
   }
 
+  // Live dispatcher view. Returns every online + ACTIVE driver with
+  // their most recent GPS reading, vehicle, and active order. Designed
+  // to be polled every ~10s by the admin Live Drivers page; the query
+  // is a single SQL pass so the polling cost is bounded.
+  @Get('admin/online')
+  @Roles(UserRole.ADMIN)
+  listOnlineForAdmin() {
+    return this.driversService.findOnlineForAdmin();
+  }
+
   // C5 — admin patches verification status. Body is { status, reason? }.
   @Patch(':id/verification')
   @Roles(UserRole.ADMIN)
