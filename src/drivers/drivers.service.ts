@@ -270,6 +270,110 @@ export class DriversService {
     return { items, total };
   }
 
+  /**
+   * Snapshot for the admin "Live Drivers" dispatcher view. Returns one
+   * row per online driver with their most recent GPS reading, vehicle
+   * basics, and (if any) the order they're currently working. The
+   * `isOnDelivery` flag is sourced from the driver_profile column —
+   * note this is not yet flipped anywhere in the codebase, so the
+   * underlying activeOrderId join is the authoritative "is busy"
+   * signal until the lifecycle is wired in a later story.
+   */
+  async findOnlineForAdmin(): Promise<
+    Array<{
+      userId: string;
+      name: string;
+      email: string;
+      phone: string | null;
+      latitude: number | null;
+      longitude: number | null;
+      lastSeenAt: string;
+      isOnDelivery: boolean;
+      vehicleType: string | null;
+      vehiclePlate: string | null;
+      activeOrderId: string | null;
+    }>
+  > {
+    type Row = {
+      userId: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      phone: string | null;
+      currentLatitude: number | null;
+      currentLongitude: number | null;
+      isOnDelivery: boolean;
+      updatedAt: Date;
+      vehicleType: string | null;
+      vehiclePlate: string | null;
+      activeOrderId: string | null;
+    };
+
+    // Single SQL pass:
+    //   - driver_profile (filtered to isOnline + verificationStatus=active)
+    //   - LEFT JOIN users on userId
+    //   - LEFT JOIN vehicles via vehicle_assignments OR ownerId=profile.id
+    //   - LEFT JOIN orders for any non-terminal order assigned to the
+    //     driver so we can show the activeOrderId.
+    const rows = await this.driverProfileRepository.query<Row[]>(`
+      SELECT
+        dp."userId"                         AS "userId",
+        u.first_name                         AS "first_name",
+        u.last_name                          AS "last_name",
+        u.email                              AS "email",
+        u.phone                              AS "phone",
+        dp."currentLatitude"                 AS "currentLatitude",
+        dp."currentLongitude"                AS "currentLongitude",
+        dp."isOnDelivery"                    AS "isOnDelivery",
+        dp."updatedAt"                       AS "updatedAt",
+        v.type                               AS "vehicleType",
+        v.plate                              AS "vehiclePlate",
+        o.id                                 AS "activeOrderId"
+      FROM driver_profiles dp
+      INNER JOIN users u ON u.id = dp."userId"
+      LEFT JOIN LATERAL (
+        SELECT vh.type, vh.plate
+        FROM vehicles vh
+        WHERE (
+          (vh."ownerType" = 'individual_driver' AND vh."ownerId" = dp.id)
+          OR vh.id IN (
+            SELECT va."vehicleId"
+            FROM vehicle_assignments va
+            WHERE va."driverId" = dp."userId"
+              AND va."endedAt" IS NULL
+          )
+        )
+        ORDER BY vh."updatedAt" DESC
+        LIMIT 1
+      ) v ON true
+      LEFT JOIN LATERAL (
+        SELECT ord.id
+        FROM orders ord
+        WHERE ord."driverId" = dp."userId"
+          AND ord.status IN ('accepted', 'picked_up', 'in_transit')
+        ORDER BY ord."updatedAt" DESC
+        LIMIT 1
+      ) o ON true
+      WHERE dp."isOnline" = true
+        AND dp."verificationStatus" = 'active'
+      ORDER BY dp."updatedAt" DESC
+    `);
+
+    return (rows as unknown as Row[]).map((r) => ({
+      userId: r.userId,
+      name: `${r.first_name ?? ''} ${r.last_name ?? ''}`.trim() || r.email,
+      email: r.email,
+      phone: r.phone,
+      latitude: r.currentLatitude == null ? null : Number(r.currentLatitude),
+      longitude: r.currentLongitude == null ? null : Number(r.currentLongitude),
+      lastSeenAt: r.updatedAt.toISOString(),
+      isOnDelivery: !!r.isOnDelivery || !!r.activeOrderId,
+      vehicleType: r.vehicleType,
+      vehiclePlate: r.vehiclePlate,
+      activeOrderId: r.activeOrderId,
+    }));
+  }
+
   async createProfile(
     userId: string,
     manager?: EntityManager,
