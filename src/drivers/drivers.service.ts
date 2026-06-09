@@ -292,6 +292,7 @@ export class DriversService {
       vehicleType: string | null;
       vehiclePlate: string | null;
       activeOrderId: string | null;
+      verificationStatus: string;
     }>
   > {
     type Row = {
@@ -307,6 +308,7 @@ export class DriversService {
       vehicleType: string | null;
       vehiclePlate: string | null;
       activeOrderId: string | null;
+      verificationStatus: string;
     };
 
     // Single SQL pass:
@@ -326,6 +328,7 @@ export class DriversService {
         dp."currentLongitude"                AS "currentLongitude",
         dp."isOnDelivery"                    AS "isOnDelivery",
         dp."updatedAt"                       AS "updatedAt",
+        dp."verificationStatus"              AS "verificationStatus",
         v.type                               AS "vehicleType",
         v.plate                              AS "vehiclePlate",
         o.id                                 AS "activeOrderId"
@@ -354,8 +357,15 @@ export class DriversService {
         ORDER BY ord."updatedAt" DESC
         LIMIT 1
       ) o ON true
+      -- Show any verified-or-better driver who is currently online.
+      -- "approved" is an intermediate state that should normally
+      -- auto-advance to "active" the moment the admin clicks Approve,
+      -- but if it didn't (e.g. the driver was approved via a direct
+      -- patch that skipped the chained transition) we still want the
+      -- admin to see them so they can fix the stuck state. The page
+      -- shows the verificationStatus per row so the cause is obvious.
       WHERE dp."isOnline" = true
-        AND dp."verificationStatus" = 'active'
+        AND dp."verificationStatus" IN ('approved', 'active')
       ORDER BY dp."updatedAt" DESC
     `);
 
@@ -371,6 +381,7 @@ export class DriversService {
       vehicleType: r.vehicleType,
       vehiclePlate: r.vehiclePlate,
       activeOrderId: r.activeOrderId,
+      verificationStatus: r.verificationStatus,
     }));
   }
 
