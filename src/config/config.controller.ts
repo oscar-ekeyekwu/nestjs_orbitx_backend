@@ -401,6 +401,20 @@ export class ConfigController {
     return this.getMapsSettings();
   }
 
+  @Get('maps-settings/key')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary:
+      'Plaintext Google Maps key for admin browser surfaces (the Maps JS library accepts the key in a URL parameter; it would be visible in the loaded script src anyway). Admin role only.',
+  })
+  async getMapsKey(): Promise<{ apiKey: string }> {
+    const key = await this.configService.getString(
+      ConfigKey.GOOGLE_MAPS_API_KEY,
+      '',
+    );
+    return { apiKey: key };
+  }
+
   @Get('allowed-id-types')
   @ApiOperation({
     summary:
