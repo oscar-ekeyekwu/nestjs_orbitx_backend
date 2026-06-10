@@ -120,6 +120,19 @@ export class OrdersController {
     return this.ordersService.cancelOrder(id, user.id, user.role);
   }
 
+  // Customer (or admin ops) re-fires the eligible-drivers fanout when
+  // a PENDING order is sitting un-accepted. Replaces the orphan-order
+  // problem with an explicit "try again" affordance. Service enforces
+  // owner-or-admin, status=pending, and a 30s cooldown per order.
+  @Post(':id/rebroadcast')
+  @ApiOperation({
+    summary:
+      'Re-broadcast a PENDING order to eligible drivers (owner customer or admin).',
+  })
+  rebroadcastOrder(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.ordersService.rebroadcast(id, user.id, user.role);
+  }
+
   // G2 — driver confirms they collected cash on a delivered order.
   // Settles the driver's wallet (fee net of commission), inserts a
   // Transaction row, flips order.paymentStatus to completed. Idempotent.

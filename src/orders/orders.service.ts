@@ -49,6 +49,16 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
 
+  /**
+   * In-memory throttle for the rebroadcast endpoint. Keys are
+   * `${orderId}`, values are the last-broadcast epoch millis. We
+   * accept that this resets on restart — the only goal is to stop
+   * accidental double-taps + abusive polling; a stale state for a
+   * few seconds post-restart is acceptable for a UX guard.
+   */
+  private static readonly REBROADCAST_COOLDOWN_MS = 30_000;
+  private readonly lastBroadcastAt = new Map<string, number>();
+
   constructor(
     @InjectRepository(Order)
     private ordersRepository: Repository<Order>,
@@ -214,6 +224,76 @@ export class OrdersService {
         }`,
     );
 
+    this.broadcastOrderToEligibleDrivers(savedOrder);
+    this.lastBroadcastAt.set(savedOrder.id, Date.now());
+
+    return savedOrder;
+  }
+
+  /**
+   * Re-runs the socket + push fanout for an already-persisted PENDING
+   * order. Used by the customer "Find driver again" affordance and by
+   * the admin Orders detail page for ops. Idempotent across restarts.
+   *
+   * Guards:
+   *   - Order must be in PENDING status (an accepted/delivered order
+   *     can't be rebroadcast — that's a customer-confusion footgun).
+   *   - Caller must be the order owner OR an admin.
+   *   - 30-second cooldown per order to stop accidental double-taps.
+   */
+  async rebroadcast(
+    orderId: string,
+    actorUserId: string,
+    actorRole: UserRole,
+  ): Promise<{ orderId: string; broadcastAt: string }> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const isOwner = order.customerId === actorUserId;
+    const isAdmin = actorRole === UserRole.ADMIN;
+    if (!isOwner && !isAdmin) {
+      throw new ForbiddenException(
+        'Only the order owner or an admin can rebroadcast this order.',
+      );
+    }
+
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException(
+        `Cannot rebroadcast an order that is already ${order.status}.`,
+      );
+    }
+
+    const last = this.lastBroadcastAt.get(orderId) ?? 0;
+    const elapsedMs = Date.now() - last;
+    if (elapsedMs < OrdersService.REBROADCAST_COOLDOWN_MS) {
+      const remainingSec = Math.ceil(
+        (OrdersService.REBROADCAST_COOLDOWN_MS - elapsedMs) / 1000,
+      );
+      throw new BadRequestException(
+        `Please wait ${remainingSec}s before re-broadcasting this order.`,
+      );
+    }
+
+    this.broadcastOrderToEligibleDrivers(order);
+    const broadcastAt = new Date();
+    this.lastBroadcastAt.set(orderId, broadcastAt.getTime());
+    this.logger.log(
+      `Order rebroadcast id=${orderId} actor=${actorUserId} role=${actorRole}`,
+    );
+    return { orderId, broadcastAt: broadcastAt.toISOString() };
+  }
+
+  /**
+   * Three-step fanout (socket → legacy admin emit → push event)
+   * used by both initial create() and rebroadcast(). Extracted so
+   * both callers stay byte-identical and the push subscriber sees
+   * the same event shape regardless of trigger.
+   */
+  private broadcastOrderToEligibleDrivers(order: Order): void {
     // ARCH-12 — narrow the broadcast to the eligible-drivers room
     // keyed on packageSize so a motorcycle driver isn't woken up for
     // a truck-sized parcel. The legacy global `new_order_available`
@@ -222,49 +302,47 @@ export class OrdersService {
     // `order_offered` subscription.
     this.safeEmit(
       () =>
-        this.realtimeGateway.emitOrderOffered(
-          savedOrder.packageSize,
-          savedOrder,
-        ),
+        this.realtimeGateway.emitOrderOffered(order.packageSize, order),
       'order_offered',
     );
     this.safeEmit(
-      () => this.realtimeGateway.emitNewOrderToDrivers(savedOrder),
+      () => this.realtimeGateway.emitNewOrderToDrivers(order),
       'new_order_available',
     );
 
-    const withCustomer = await this.ordersRepository.findOne({
-      where: { id: savedOrder.id },
-      relations: ['customer'],
-    });
-    if (withCustomer?.customer) {
-      await this.safeNotify('order_created', () =>
-        this.notifications.notifyOrderCreated(
-          withCustomer,
-          this.recipient(withCustomer.customer),
-        ),
+    void this.ordersRepository
+      .findOne({ where: { id: order.id }, relations: ['customer'] })
+      .then(async (withCustomer) => {
+        if (withCustomer?.customer) {
+          await this.safeNotify('order_created', () =>
+            this.notifications.notifyOrderCreated(
+              withCustomer,
+              this.recipient(withCustomer.customer),
+            ),
+          );
+        }
+      })
+      .catch((err) =>
+        this.logger.error(`Customer notification fetch failed: ${err}`),
       );
-    }
 
     // Push fanout to eligible drivers. Socket broadcasts only reach
     // drivers whose app is foregrounded + connected; push reaches
     // everyone who's marked themselves online. Post-commit, fire-and-
     // forget — handler is in PushFanoutEventSubscribers.
     this.eventEmitter.emit('order.created', {
-      orderId: savedOrder.id,
-      packageSize: savedOrder.packageSize,
-      pickupAddress: savedOrder.pickupAddress,
-      deliveryAddress: savedOrder.deliveryAddress,
-      estimatedPriceNaira: Number(savedOrder.estimatedPrice),
+      orderId: order.id,
+      packageSize: order.packageSize,
+      pickupAddress: order.pickupAddress,
+      deliveryAddress: order.deliveryAddress,
+      estimatedPriceNaira: Number(order.estimatedPrice),
       // Proximity + balance dispatch inputs — the push subscriber filters
       // recipients to drivers within radius of the pickup whose wallet can
       // cover the charge.
-      pickupLatitude: savedOrder.pickupLatitude,
-      pickupLongitude: savedOrder.pickupLongitude,
-      platformChargeNaira: Number(savedOrder.platformCharge ?? 0),
+      pickupLatitude: order.pickupLatitude,
+      pickupLongitude: order.pickupLongitude,
+      platformChargeNaira: Number(order.platformCharge ?? 0),
     });
-
-    return savedOrder;
   }
 
   /**
