@@ -343,7 +343,7 @@ export class DriversService {
             SELECT va."vehicleId"
             FROM vehicle_assignments va
             WHERE va."driverId" = dp."userId"
-              AND va."endedAt" IS NULL
+              AND va."unassignedAt" IS NULL
           )
         )
         ORDER BY vh."updatedAt" DESC
