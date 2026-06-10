@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { Document } from '../documents/entities/document.entity';
+import { DriverProfile } from '../drivers/entities/driver-profile.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Transaction } from '../wallet/entities/transaction.entity';
 import { Wallet } from '../wallet/entities/wallet.entity';
@@ -19,7 +20,14 @@ import { MeService } from './me.service';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Order, Document, Wallet, Transaction]),
+    TypeOrmModule.forFeature([
+      User,
+      Order,
+      Document,
+      Wallet,
+      Transaction,
+      DriverProfile,
+    ]),
     ApprovalsModule,
   ],
   controllers: [MeController],

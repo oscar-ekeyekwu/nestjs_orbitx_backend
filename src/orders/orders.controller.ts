@@ -132,6 +132,43 @@ export class OrdersController {
     return this.ordersService.markCashCollected(id, user.id);
   }
 
+  // Phase 3 — bank-transfer payment loop.
+
+  @Get(':id/driver-bank-account')
+  @ApiOperation({
+    summary:
+      'Read the assigned driver bank account for an order so the customer can transfer offline. Falls back to the platform account when the driver hasn\'t filled their details in.',
+  })
+  getDriverBankAccount(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.ordersService.getDriverBankAccount(id, user.id, user.role);
+  }
+
+  @Post(':id/customer-marked-paid')
+  @Roles(UserRole.CUSTOMER)
+  @ApiOperation({
+    summary:
+      'Customer marks "I\'ve sent the bank transfer". Flips paymentStatus to customer_marked_paid + notifies the driver.',
+  })
+  customerMarkPaid(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.ordersService.markCustomerPaid(id, user.id);
+  }
+
+  @Post(':id/confirm-payment-received')
+  @Roles(UserRole.DRIVER)
+  @ApiOperation({
+    summary:
+      'Driver confirms they received the bank transfer. Flips paymentStatus to completed.',
+  })
+  confirmPaymentReceived(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.ordersService.confirmPaymentReceived(id, user.id);
+  }
+
   // E3 — customer mints a share token for the recipient. Idempotent;
   // a second call for the same order returns the same token.
   @Post(':id/share-token')

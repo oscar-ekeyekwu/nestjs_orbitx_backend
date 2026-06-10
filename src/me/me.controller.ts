@@ -24,6 +24,26 @@ class SetBvnDto {
   bvn: string;
 }
 
+class SetDriverBankAccountDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9 \-&,.()/]{2,80}$/, {
+    message: 'Bank name must be 2-80 characters of letters, digits, and basic punctuation.',
+  })
+  bankName: string;
+
+  @IsString()
+  @Matches(/^[A-Za-z .'-]{2,120}$/, {
+    message: 'Account name must be 2-120 letters, spaces, apostrophes, hyphens, or dots.',
+  })
+  accountName: string;
+
+  @IsString()
+  @Matches(/^\d{10}$/, {
+    message: 'Account number must be exactly 10 digits.',
+  })
+  accountNumber: string;
+}
+
 /**
  * I1 — NDPA data-subject-rights endpoints. All routes are scoped to
  * the authenticated user.
@@ -107,5 +127,33 @@ export class MeController {
   })
   async getBvn(@CurrentUser() user: User) {
     return this.service.getBvnSnapshot(user.id);
+  }
+
+  // Phase 3 — driver bank account customers transfer their delivery
+  // fee to. Driver-only; the service rejects non-drivers.
+  @Put('driver/bank-account')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Driver sets or updates the bank account customers transfer their delivery fee to. Validates Nigerian bank-account shape (10-digit account number).',
+  })
+  async setDriverBankAccount(
+    @CurrentUser() user: User,
+    @Body() dto: SetDriverBankAccountDto,
+  ) {
+    return this.service.setDriverBankAccount(user.id, {
+      bankName: dto.bankName.trim(),
+      accountName: dto.accountName.trim(),
+      accountNumber: dto.accountNumber.trim(),
+    });
+  }
+
+  @Get('driver/bank-account')
+  @ApiOperation({
+    summary:
+      'Read the caller`s saved driver bank account. Returns null when not yet set.',
+  })
+  async getDriverBankAccount(@CurrentUser() user: User) {
+    return this.service.getDriverBankAccount(user.id);
   }
 }

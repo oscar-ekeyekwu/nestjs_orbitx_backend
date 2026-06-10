@@ -14,7 +14,9 @@ import { ApprovalsService } from '../approvals/approvals.service';
 import { DataSource } from 'typeorm';
 import { Order } from '../orders/entities/order.entity';
 import { Document } from '../documents/entities/document.entity';
+import { DriverProfile } from '../drivers/entities/driver-profile.entity';
 import { User } from '../users/entities/user.entity';
+import { UserRole } from '../common/enums/user-role.enum';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import { Transaction } from '../wallet/entities/transaction.entity';
 import { StorageCryptoService } from '../storage/crypto.service';
@@ -84,6 +86,8 @@ export class MeService {
     private readonly wallets: Repository<Wallet>,
     @InjectRepository(Transaction)
     private readonly transactions: Repository<Transaction>,
+    @InjectRepository(DriverProfile)
+    private readonly driverProfiles: Repository<DriverProfile>,
     private readonly dataSource: DataSource,
     private readonly approvals: ApprovalsService,
     private readonly crypto: StorageCryptoService,
@@ -133,6 +137,84 @@ export class MeService {
     });
     if (!user || !user.bvnLast4 || !user.bvnUpdatedAt) return null;
     return { last4: user.bvnLast4, updatedAt: user.bvnUpdatedAt };
+  }
+
+  /**
+   * Phase 3 — driver self-sets the bank account customers transfer
+   * their delivery fee to. The DTO has already validated shape; we
+   * just persist + return the saved snapshot.
+   *
+   * Rejected when the caller isn't a driver: customers don't need
+   * a payout account and a stray PUT here from a customer client
+   * would be a bug.
+   */
+  async setDriverBankAccount(
+    userId: string,
+    payload: {
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+    },
+  ): Promise<{
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    updatedAt: Date;
+  }> {
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found.');
+    if (user.role !== UserRole.DRIVER) {
+      throw new BadRequestException(
+        'Only drivers can set a payout bank account.',
+      );
+    }
+
+    const profile = await this.driverProfiles.findOne({ where: { userId } });
+    if (!profile) {
+      throw new NotFoundException(
+        'Driver profile not found — finish driver setup first.',
+      );
+    }
+
+    profile.bankName = payload.bankName;
+    profile.bankAccountName = payload.accountName;
+    profile.bankAccountNumber = payload.accountNumber;
+    const saved = await this.driverProfiles.save(profile);
+
+    return {
+      bankName: saved.bankName!,
+      accountName: saved.bankAccountName!,
+      accountNumber: saved.bankAccountNumber!,
+      updatedAt: saved.updatedAt,
+    };
+  }
+
+  /**
+   * Phase 3 — read the caller's saved driver bank account. Returns
+   * null when not yet set so the mobile form can render an "add
+   * account" state without a 404 churn.
+   */
+  async getDriverBankAccount(userId: string): Promise<{
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    updatedAt: Date;
+  } | null> {
+    const profile = await this.driverProfiles.findOne({ where: { userId } });
+    if (
+      !profile ||
+      !profile.bankName ||
+      !profile.bankAccountName ||
+      !profile.bankAccountNumber
+    ) {
+      return null;
+    }
+    return {
+      bankName: profile.bankName,
+      accountName: profile.bankAccountName,
+      accountNumber: profile.bankAccountNumber,
+      updatedAt: profile.updatedAt,
+    };
   }
 
   async export(userId: string): Promise<UserDataExport> {
