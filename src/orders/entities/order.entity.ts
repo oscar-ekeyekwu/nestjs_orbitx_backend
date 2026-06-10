@@ -258,4 +258,11 @@ export class Order {
   // while this is true; the admin closes the incident which clears it.
   @Column({ type: 'boolean', default: false })
   incidentFlagged: boolean;
+
+  // Phase 2 dispatch — back-link to the OrderRequest that spawned
+  // this order. Null on legacy orders (created directly via POST
+  // /orders). Threaded through so admin tools can trace pricing
+  // and offer history from the order back to the request.
+  @Column({ type: 'uuid', nullable: true })
+  orderRequestId: string | null;
 }

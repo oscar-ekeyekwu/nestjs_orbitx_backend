@@ -287,7 +287,33 @@ export class OrdersService {
     insuranceFee: string | null;
     distanceKm: string;
   }> {
-    const distance = this.calculateDistance(
+    const quote = await this.quote(input);
+    return {
+      estimatedPrice: quote.estimatedPrice.toString(),
+      insuranceFee: quote.insuranceFee ? quote.insuranceFee.toString() : null,
+      distanceKm: quote.distanceKm.toFixed(2),
+    };
+  }
+
+  /**
+   * Typed pricing helper shared by `estimate()` (mobile preview),
+   * `create()` (persisted order), and the OrderRequest dispatch
+   * flow. Single source of truth so a config tweak never produces
+   * three different numbers across the three call sites.
+   */
+  async quote(input: {
+    pickupLatitude: number;
+    pickupLongitude: number;
+    deliveryLatitude: number;
+    deliveryLongitude: number;
+    packageSize: PackageSize;
+  }): Promise<{
+    estimatedPrice: Naira;
+    insuranceFee: Naira | null;
+    platformCharge: Naira;
+    distanceKm: number;
+  }> {
+    const distanceKm = this.calculateDistance(
       input.pickupLatitude,
       input.pickupLongitude,
       input.deliveryLatitude,
@@ -301,11 +327,9 @@ export class OrdersService {
       input.packageSize,
     );
     const insuranceFee = await this.calculateInsuranceFee(estimatedPrice);
-    return {
-      estimatedPrice: estimatedPrice.toString(),
-      insuranceFee: insuranceFee ? insuranceFee.toString() : null,
-      distanceKm: distance.toFixed(2),
-    };
+    const platformCharge =
+      await this.walletService.computeOrderCharge(estimatedPrice);
+    return { estimatedPrice, insuranceFee, platformCharge, distanceKm };
   }
 
   async findAll(

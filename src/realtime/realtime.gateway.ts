@@ -387,6 +387,75 @@ export class RealtimeGateway
     this.emitToUser(customerId, 'order_accepted', { orderId, driver });
   }
 
+  /**
+   * Phase 2 dispatch — fan out a freshly-created OrderRequest to
+   * every driver in the matching eligible room. Same room semantics
+   * as emitOrderOffered (drivers:eligible:lagos:{packageSize}) so the
+   * existing room-membership rules apply unchanged. Returns the room
+   * name for logging.
+   */
+  emitRequestCreated(packageSize: string, request: object): string {
+    const room = RealtimeGateway.eligibleRoom(packageSize);
+    this.server.to(room).emit('request_created', {
+      request,
+      timestamp: new Date().toISOString(),
+    });
+    void this.server
+      .in(room)
+      .fetchSockets()
+      .then((sockets) => {
+        this.logger.log(
+          `request_created → room=${room} sockets=${sockets.length}`,
+        );
+      })
+      .catch(() => undefined);
+    return room;
+  }
+
+  /**
+   * Phase 2 dispatch — push a single offer update to the customer's
+   * socket. `kind` discriminates the lifecycle event so the mobile
+   * "Finding driver" screen can update its list incrementally.
+   */
+  emitOfferUpdate(
+    customerId: string,
+    payload: {
+      requestId: string;
+      offerId: string;
+      kind: 'submitted' | 'withdrawn' | 'expired';
+      offer?: object;
+    },
+  ): void {
+    this.emitToUser(customerId, 'offer_update', payload);
+  }
+
+  /**
+   * Phase 2 dispatch — request reached a terminal state. Drivers in
+   * the eligible room learn the request is no longer available; the
+   * customer learns whether they got an order, an expiry, or a cancel.
+   */
+  emitRequestResolved(payload: {
+    packageSize: string;
+    requestId: string;
+    customerId: string;
+    outcome: 'resolved' | 'expired' | 'cancelled';
+    orderId?: string;
+    winningDriverId?: string;
+  }): void {
+    const room = RealtimeGateway.eligibleRoom(payload.packageSize);
+    this.server.to(room).emit('request_resolved', {
+      requestId: payload.requestId,
+      outcome: payload.outcome,
+      timestamp: new Date().toISOString(),
+    });
+    this.emitToUser(payload.customerId, 'request_resolved', {
+      requestId: payload.requestId,
+      outcome: payload.outcome,
+      orderId: payload.orderId ?? null,
+      winningDriverId: payload.winningDriverId ?? null,
+    });
+  }
+
   notifyUser(userId: string, event: string, data: Record<string, any>): void {
     this.emitToUser(userId, event, data);
   }
