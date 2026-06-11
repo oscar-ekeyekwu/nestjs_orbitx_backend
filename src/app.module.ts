@@ -10,6 +10,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { OrdersModule } from './orders/orders.module';
+import { OrderRequestsModule } from './order-requests/order-requests.module';
 import { DriversModule } from './drivers/drivers.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { NotificationsModule } from './notifications/notification.module';
@@ -77,6 +78,7 @@ import { MapsModule } from './maps/maps.module';
     AuthModule,
     UsersModule,
     OrdersModule,
+    OrderRequestsModule,
     DriversModule,
     RealtimeModule,
     NotificationsModule,
