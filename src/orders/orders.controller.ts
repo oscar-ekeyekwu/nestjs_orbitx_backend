@@ -120,6 +120,19 @@ export class OrdersController {
     return this.ordersService.cancelOrder(id, user.id, user.role);
   }
 
+  // Customer (or admin ops) re-fires the eligible-drivers fanout when
+  // a PENDING order is sitting un-accepted. Replaces the orphan-order
+  // problem with an explicit "try again" affordance. Service enforces
+  // owner-or-admin, status=pending, and a 30s cooldown per order.
+  @Post(':id/rebroadcast')
+  @ApiOperation({
+    summary:
+      'Re-broadcast a PENDING order to eligible drivers (owner customer or admin).',
+  })
+  rebroadcastOrder(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.ordersService.rebroadcast(id, user.id, user.role);
+  }
+
   // G2 — driver confirms they collected cash on a delivered order.
   // Settles the driver's wallet (fee net of commission), inserts a
   // Transaction row, flips order.paymentStatus to completed. Idempotent.
@@ -130,6 +143,43 @@ export class OrdersController {
   })
   markCashCollected(@Param('id') id: string, @CurrentUser() user: User) {
     return this.ordersService.markCashCollected(id, user.id);
+  }
+
+  // Phase 3 — bank-transfer payment loop.
+
+  @Get(':id/driver-bank-account')
+  @ApiOperation({
+    summary:
+      'Read the assigned driver bank account for an order so the customer can transfer offline. Falls back to the platform account when the driver hasn\'t filled their details in.',
+  })
+  getDriverBankAccount(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.ordersService.getDriverBankAccount(id, user.id, user.role);
+  }
+
+  @Post(':id/customer-marked-paid')
+  @Roles(UserRole.CUSTOMER)
+  @ApiOperation({
+    summary:
+      'Customer marks "I\'ve sent the bank transfer". Flips paymentStatus to customer_marked_paid + notifies the driver.',
+  })
+  customerMarkPaid(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.ordersService.markCustomerPaid(id, user.id);
+  }
+
+  @Post(':id/confirm-payment-received')
+  @Roles(UserRole.DRIVER)
+  @ApiOperation({
+    summary:
+      'Driver confirms they received the bank transfer. Flips paymentStatus to completed.',
+  })
+  confirmPaymentReceived(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.ordersService.confirmPaymentReceived(id, user.id);
   }
 
   // E3 — customer mints a share token for the recipient. Idempotent;

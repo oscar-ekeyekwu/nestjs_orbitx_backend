@@ -78,6 +78,21 @@ export enum ConfigKey {
   // admin tunes from Settings → ID Document Types without an APK
   // rebuild.
   ALLOWED_DRIVER_ID_TYPES = 'ALLOWED_DRIVER_ID_TYPES',
+
+  // Phase 2 dispatch — how long a customer's OrderRequest stays open
+  // (seconds) before the expiry cron flips it to expired. 0 disables
+  // auto-expiry. Default 300 = 5 minutes.
+  ORDER_REQUEST_TTL_SECONDS = 'ORDER_REQUEST_TTL_SECONDS',
+
+  // Phase 2 dispatch — how long a single driver offer remains pending
+  // before the expiry cron marks it expired. Customers can still tap
+  // accept on a fresher offer while this one ages out. Default 60.
+  DISPATCH_OFFER_TTL_SECONDS = 'DISPATCH_OFFER_TTL_SECONDS',
+
+  // Phase 2 dispatch — initial driver-eligibility radius (km) for an
+  // OrderRequest. Independent of ORDER_DELIVERY_RADIUS_KM so ops can
+  // tune the two flows separately as the request-flow ramps.
+  ORDER_REQUEST_RADIUS_KM = 'ORDER_REQUEST_RADIUS_KM',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -243,5 +258,23 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'JSON array of DocumentType slugs the customer mobile may offer in its driver ID picker. Admin-tunable from Settings → ID Document Types.',
     dataType: 'json',
+  },
+  [ConfigKey.ORDER_REQUEST_TTL_SECONDS]: {
+    value: '300',
+    description:
+      'How long an OrderRequest stays open before the expiry cron flips it. 0 disables auto-expiry.',
+    dataType: 'number',
+  },
+  [ConfigKey.DISPATCH_OFFER_TTL_SECONDS]: {
+    value: '60',
+    description:
+      'How long a single driver offer remains pending before being marked expired. The customer must act within this window or pick a fresher offer.',
+    dataType: 'number',
+  },
+  [ConfigKey.ORDER_REQUEST_RADIUS_KM]: {
+    value: '5',
+    description:
+      'Initial driver-eligibility radius around the pickup (km) for an OrderRequest fanout. Independent of ORDER_DELIVERY_RADIUS_KM so the two flows can be tuned separately.',
+    dataType: 'number',
   },
 };

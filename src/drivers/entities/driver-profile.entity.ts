@@ -116,6 +116,22 @@ export class DriverProfile {
   @Column({ default: true })
   isVerified: boolean;
 
+  // Phase 3 — bank account customers transfer their delivery fee
+  // to. Surfaced on the customer's tracking screen once an order is
+  // accepted (paymentStatus=pending_transfer). Nullable across the
+  // table because pre-Phase-3 drivers haven't filled them in yet;
+  // the customer screen falls back to the platform bank account if
+  // null, and pushes a "complete your payout details" reminder to
+  // the driver on first delivery.
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  bankName: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  bankAccountName: string | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  bankAccountNumber: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

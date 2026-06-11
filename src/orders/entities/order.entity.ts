@@ -45,16 +45,20 @@ export enum PackageSize {
 /**
  * Order-level payment lifecycle.
  *
- * pending          : Paystack awaiting webhook confirmation (G1).
- * pending_cash     : Cash on delivery — driver still to collect (G2).
- * pending_transfer : Manual bank transfer — admin still to reconcile (G3).
- * completed        : Money received and accounted for.
- * failed           : Payment unrecoverable — admin reconcile path.
+ * pending                : Paystack awaiting webhook confirmation (G1).
+ * pending_cash           : Cash on delivery — driver still to collect (G2).
+ * pending_transfer       : Manual bank transfer — customer hasn't yet
+ *                          marked the transfer sent (G3).
+ * customer_marked_paid   : Phase 3 — customer claims the transfer is
+ *                          done; driver still to confirm receipt.
+ * completed              : Money received and accounted for.
+ * failed                 : Payment unrecoverable — admin reconcile path.
  */
 export enum OrderPaymentStatus {
   PENDING = 'pending',
   PENDING_CASH = 'pending_cash',
   PENDING_TRANSFER = 'pending_transfer',
+  CUSTOMER_MARKED_PAID = 'customer_marked_paid',
   COMPLETED = 'completed',
   FAILED = 'failed',
 }
@@ -217,6 +221,18 @@ export class Order {
   @Column({ type: 'timestamp', nullable: true })
   deliveredAt: Date;
 
+  // Phase 3 — bank-transfer payment loop. Set when the customer
+  // marks "I've paid" from the tracking screen. Distinct from
+  // paymentConfirmedAt: this is the customer's claim; that's the
+  // driver's confirmation.
+  @Column({ type: 'timestamp', nullable: true })
+  customerMarkedPaidAt: Date | null;
+
+  // Set when the driver confirms receipt from the active-delivery
+  // screen. Flips paymentStatus to COMPLETED.
+  @Column({ type: 'timestamp', nullable: true })
+  paymentConfirmedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 
@@ -258,4 +274,11 @@ export class Order {
   // while this is true; the admin closes the incident which clears it.
   @Column({ type: 'boolean', default: false })
   incidentFlagged: boolean;
+
+  // Phase 2 dispatch — back-link to the OrderRequest that spawned
+  // this order. Null on legacy orders (created directly via POST
+  // /orders). Threaded through so admin tools can trace pricing
+  // and offer history from the order back to the request.
+  @Column({ type: 'uuid', nullable: true })
+  orderRequestId: string | null;
 }

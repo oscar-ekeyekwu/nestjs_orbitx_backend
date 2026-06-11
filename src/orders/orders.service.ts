@@ -49,6 +49,16 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
 
+  /**
+   * In-memory throttle for the rebroadcast endpoint. Keys are
+   * `${orderId}`, values are the last-broadcast epoch millis. We
+   * accept that this resets on restart — the only goal is to stop
+   * accidental double-taps + abusive polling; a stale state for a
+   * few seconds post-restart is acceptable for a UX guard.
+   */
+  private static readonly REBROADCAST_COOLDOWN_MS = 30_000;
+  private readonly lastBroadcastAt = new Map<string, number>();
+
   constructor(
     @InjectRepository(Order)
     private ordersRepository: Repository<Order>,
@@ -214,6 +224,76 @@ export class OrdersService {
         }`,
     );
 
+    this.broadcastOrderToEligibleDrivers(savedOrder);
+    this.lastBroadcastAt.set(savedOrder.id, Date.now());
+
+    return savedOrder;
+  }
+
+  /**
+   * Re-runs the socket + push fanout for an already-persisted PENDING
+   * order. Used by the customer "Find driver again" affordance and by
+   * the admin Orders detail page for ops. Idempotent across restarts.
+   *
+   * Guards:
+   *   - Order must be in PENDING status (an accepted/delivered order
+   *     can't be rebroadcast — that's a customer-confusion footgun).
+   *   - Caller must be the order owner OR an admin.
+   *   - 30-second cooldown per order to stop accidental double-taps.
+   */
+  async rebroadcast(
+    orderId: string,
+    actorUserId: string,
+    actorRole: UserRole,
+  ): Promise<{ orderId: string; broadcastAt: string }> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const isOwner = order.customerId === actorUserId;
+    const isAdmin = actorRole === UserRole.ADMIN;
+    if (!isOwner && !isAdmin) {
+      throw new ForbiddenException(
+        'Only the order owner or an admin can rebroadcast this order.',
+      );
+    }
+
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException(
+        `Cannot rebroadcast an order that is already ${order.status}.`,
+      );
+    }
+
+    const last = this.lastBroadcastAt.get(orderId) ?? 0;
+    const elapsedMs = Date.now() - last;
+    if (elapsedMs < OrdersService.REBROADCAST_COOLDOWN_MS) {
+      const remainingSec = Math.ceil(
+        (OrdersService.REBROADCAST_COOLDOWN_MS - elapsedMs) / 1000,
+      );
+      throw new BadRequestException(
+        `Please wait ${remainingSec}s before re-broadcasting this order.`,
+      );
+    }
+
+    this.broadcastOrderToEligibleDrivers(order);
+    const broadcastAt = new Date();
+    this.lastBroadcastAt.set(orderId, broadcastAt.getTime());
+    this.logger.log(
+      `Order rebroadcast id=${orderId} actor=${actorUserId} role=${actorRole}`,
+    );
+    return { orderId, broadcastAt: broadcastAt.toISOString() };
+  }
+
+  /**
+   * Three-step fanout (socket → legacy admin emit → push event)
+   * used by both initial create() and rebroadcast(). Extracted so
+   * both callers stay byte-identical and the push subscriber sees
+   * the same event shape regardless of trigger.
+   */
+  private broadcastOrderToEligibleDrivers(order: Order): void {
     // ARCH-12 — narrow the broadcast to the eligible-drivers room
     // keyed on packageSize so a motorcycle driver isn't woken up for
     // a truck-sized parcel. The legacy global `new_order_available`
@@ -222,49 +302,47 @@ export class OrdersService {
     // `order_offered` subscription.
     this.safeEmit(
       () =>
-        this.realtimeGateway.emitOrderOffered(
-          savedOrder.packageSize,
-          savedOrder,
-        ),
+        this.realtimeGateway.emitOrderOffered(order.packageSize, order),
       'order_offered',
     );
     this.safeEmit(
-      () => this.realtimeGateway.emitNewOrderToDrivers(savedOrder),
+      () => this.realtimeGateway.emitNewOrderToDrivers(order),
       'new_order_available',
     );
 
-    const withCustomer = await this.ordersRepository.findOne({
-      where: { id: savedOrder.id },
-      relations: ['customer'],
-    });
-    if (withCustomer?.customer) {
-      await this.safeNotify('order_created', () =>
-        this.notifications.notifyOrderCreated(
-          withCustomer,
-          this.recipient(withCustomer.customer),
-        ),
+    void this.ordersRepository
+      .findOne({ where: { id: order.id }, relations: ['customer'] })
+      .then(async (withCustomer) => {
+        if (withCustomer?.customer) {
+          await this.safeNotify('order_created', () =>
+            this.notifications.notifyOrderCreated(
+              withCustomer,
+              this.recipient(withCustomer.customer),
+            ),
+          );
+        }
+      })
+      .catch((err) =>
+        this.logger.error(`Customer notification fetch failed: ${err}`),
       );
-    }
 
     // Push fanout to eligible drivers. Socket broadcasts only reach
     // drivers whose app is foregrounded + connected; push reaches
     // everyone who's marked themselves online. Post-commit, fire-and-
     // forget — handler is in PushFanoutEventSubscribers.
     this.eventEmitter.emit('order.created', {
-      orderId: savedOrder.id,
-      packageSize: savedOrder.packageSize,
-      pickupAddress: savedOrder.pickupAddress,
-      deliveryAddress: savedOrder.deliveryAddress,
-      estimatedPriceNaira: Number(savedOrder.estimatedPrice),
+      orderId: order.id,
+      packageSize: order.packageSize,
+      pickupAddress: order.pickupAddress,
+      deliveryAddress: order.deliveryAddress,
+      estimatedPriceNaira: Number(order.estimatedPrice),
       // Proximity + balance dispatch inputs — the push subscriber filters
       // recipients to drivers within radius of the pickup whose wallet can
       // cover the charge.
-      pickupLatitude: savedOrder.pickupLatitude,
-      pickupLongitude: savedOrder.pickupLongitude,
-      platformChargeNaira: Number(savedOrder.platformCharge ?? 0),
+      pickupLatitude: order.pickupLatitude,
+      pickupLongitude: order.pickupLongitude,
+      platformChargeNaira: Number(order.platformCharge ?? 0),
     });
-
-    return savedOrder;
   }
 
   /**
@@ -287,7 +365,33 @@ export class OrdersService {
     insuranceFee: string | null;
     distanceKm: string;
   }> {
-    const distance = this.calculateDistance(
+    const quote = await this.quote(input);
+    return {
+      estimatedPrice: quote.estimatedPrice.toString(),
+      insuranceFee: quote.insuranceFee ? quote.insuranceFee.toString() : null,
+      distanceKm: quote.distanceKm.toFixed(2),
+    };
+  }
+
+  /**
+   * Typed pricing helper shared by `estimate()` (mobile preview),
+   * `create()` (persisted order), and the OrderRequest dispatch
+   * flow. Single source of truth so a config tweak never produces
+   * three different numbers across the three call sites.
+   */
+  async quote(input: {
+    pickupLatitude: number;
+    pickupLongitude: number;
+    deliveryLatitude: number;
+    deliveryLongitude: number;
+    packageSize: PackageSize;
+  }): Promise<{
+    estimatedPrice: Naira;
+    insuranceFee: Naira | null;
+    platformCharge: Naira;
+    distanceKm: number;
+  }> {
+    const distanceKm = this.calculateDistance(
       input.pickupLatitude,
       input.pickupLongitude,
       input.deliveryLatitude,
@@ -301,11 +405,9 @@ export class OrdersService {
       input.packageSize,
     );
     const insuranceFee = await this.calculateInsuranceFee(estimatedPrice);
-    return {
-      estimatedPrice: estimatedPrice.toString(),
-      insuranceFee: insuranceFee ? insuranceFee.toString() : null,
-      distanceKm: distance.toFixed(2),
-    };
+    const platformCharge =
+      await this.walletService.computeOrderCharge(estimatedPrice);
+    return { estimatedPrice, insuranceFee, platformCharge, distanceKm };
   }
 
   async findAll(
@@ -754,6 +856,198 @@ export class OrdersService {
       order.finalPrice = order.finalPrice ?? order.estimatedPrice;
       return manager.save(order);
     });
+  }
+
+  /**
+   * Phase 3 — customer-scoped read of the assigned driver's bank
+   * account so the customer can transfer the delivery fee offline.
+   * Falls back to the platform bank account when the driver hasn't
+   * filled their details in (legacy data, fresh signup), so the
+   * customer always has SOMEWHERE to send the money.
+   *
+   * Guards:
+   *   - Caller must own the order (or be admin).
+   *   - Order must be ACCEPTED or later (a pending order has no
+   *     assigned driver yet, so this would 404 anyway).
+   */
+  async getDriverBankAccount(
+    orderId: string,
+    actorUserId: string,
+    actorRole: UserRole,
+  ): Promise<{
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    source: 'driver' | 'platform';
+  }> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      relations: ['driver'],
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (
+      actorRole !== UserRole.ADMIN &&
+      order.customerId !== actorUserId
+    ) {
+      throw new ForbiddenException(
+        'Only the order owner can view payment instructions.',
+      );
+    }
+    if (!order.driverId) {
+      throw new BadRequestException(
+        'No driver has accepted this order yet.',
+      );
+    }
+
+    // Pull driver_profile via raw query — keeps the orders module
+    // out of the DriversModule dependency cycle. Returns null when
+    // the profile hasn't filled bank details in.
+    const rows = (await this.ordersRepository.query(
+      `SELECT "bankName", "bankAccountName", "bankAccountNumber"
+       FROM driver_profiles
+       WHERE "userId" = $1
+       LIMIT 1`,
+      [order.driverId],
+    )) as Array<{
+      bankName: string | null;
+      bankAccountName: string | null;
+      bankAccountNumber: string | null;
+    }>;
+    const profile = rows[0];
+
+    if (
+      profile?.bankName &&
+      profile?.bankAccountName &&
+      profile?.bankAccountNumber
+    ) {
+      return {
+        bankName: profile.bankName,
+        accountName: profile.bankAccountName,
+        accountNumber: profile.bankAccountNumber,
+        source: 'driver',
+      };
+    }
+
+    const fallback = await this.getPlatformBankAccount();
+    return { ...fallback, source: 'platform' };
+  }
+
+  /**
+   * Phase 3 — customer marks "I've sent the transfer" on an order
+   * that's in pending_transfer. Flips paymentStatus to
+   * customer_marked_paid + stamps customerMarkedPaidAt. Idempotent:
+   * a second call after the flip is a no-op return.
+   *
+   * Does NOT settle the driver's wallet — that happens when the
+   * driver confirms receipt (confirmPaymentReceived).
+   */
+  async markCustomerPaid(
+    orderId: string,
+    customerId: string,
+  ): Promise<Order> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.customerId !== customerId) {
+      throw new ForbiddenException('Not your order.');
+    }
+
+    if (
+      order.paymentStatus === OrderPaymentStatus.CUSTOMER_MARKED_PAID ||
+      order.paymentStatus === OrderPaymentStatus.COMPLETED
+    ) {
+      // Idempotent on already-paid or already-confirmed.
+      return order;
+    }
+    if (order.paymentStatus !== OrderPaymentStatus.PENDING_TRANSFER) {
+      throw new BadRequestException(
+        `Cannot mark this order paid — payment status is ${order.paymentStatus}.`,
+      );
+    }
+
+    order.paymentStatus = OrderPaymentStatus.CUSTOMER_MARKED_PAID;
+    order.customerMarkedPaidAt = new Date();
+    const saved = await this.ordersRepository.save(order);
+
+    this.logger.log(
+      `Order ${orderId} customer marked paid by ${customerId}`,
+    );
+
+    // Push the driver via the existing realtime gateway. The driver
+    // mobile shows a "customer says they've paid — confirm receipt"
+    // banner the next time the active-delivery screen renders, AND
+    // gets a push if their app is backgrounded.
+    if (order.driverId) {
+      this.safeEmit(
+        () =>
+          this.realtimeGateway.emitOrderStatusUpdate(
+            saved.id,
+            saved.status,
+            saved,
+          ),
+        'order_status_updated.customer_marked_paid',
+      );
+      this.eventEmitter.emit('order.customer_marked_paid', {
+        orderId: saved.id,
+        driverId: order.driverId,
+      });
+    }
+
+    return saved;
+  }
+
+  /**
+   * Phase 3 — driver confirms they received the customer's transfer.
+   * Flips paymentStatus to completed + stamps paymentConfirmedAt.
+   * Settles the driver's wallet via the same path the legacy cash
+   * flow uses, so the driver's earnings ledger stays consistent.
+   *
+   * Idempotent: a second call after the flip is a no-op return.
+   */
+  async confirmPaymentReceived(
+    orderId: string,
+    driverId: string,
+  ): Promise<Order> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.driverId !== driverId) {
+      throw new ForbiddenException('Not your order.');
+    }
+
+    if (order.paymentStatus === OrderPaymentStatus.COMPLETED) {
+      return order;
+    }
+    if (order.paymentStatus !== OrderPaymentStatus.CUSTOMER_MARKED_PAID) {
+      throw new BadRequestException(
+        `Cannot confirm receipt — payment status is ${order.paymentStatus} (waiting for the customer to mark paid first).`,
+      );
+    }
+
+    order.paymentStatus = OrderPaymentStatus.COMPLETED;
+    order.paymentConfirmedAt = new Date();
+    const saved = await this.ordersRepository.save(order);
+
+    this.logger.log(
+      `Order ${orderId} payment confirmed by driver ${driverId}`,
+    );
+
+    // Notify the customer via socket so the tracking screen flips
+    // its banner from "We've notified the driver" to "Payment
+    // confirmed — thank you".
+    this.safeEmit(
+      () =>
+        this.realtimeGateway.emitOrderStatusUpdate(
+          saved.id,
+          saved.status,
+          saved,
+        ),
+      'order_status_updated.payment_confirmed',
+    );
+
+    return saved;
   }
 
   /**
