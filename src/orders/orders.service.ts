@@ -942,6 +942,9 @@ export class OrdersService {
         amountNaira: Number(saved.finalPrice ?? saved.estimatedPrice),
         customerName:
           withCustomer?.customer?.name ?? 'The customer',
+        // Sprint 5 — pass through whether a proof screenshot was
+        // attached so the push template can switch its title.
+        hasProof: !!saved.paymentProofUrl,
       });
     }
 

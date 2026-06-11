@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Put, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SystemConfigService } from './config.service';
@@ -6,6 +6,8 @@ import { ConfigKey } from './enums/config-keys.enum';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '../users/entities/user.entity';
 import { UserRole } from '../common/enums/user-role.enum';
 
 export type VehicleEditGraceMode = 'continue' | 'lock';
@@ -35,6 +37,8 @@ interface FeatureFlagsResponse {
 @ApiTags('Configuration')
 @Controller('config/feature-flags')
 export class FeatureFlagsController {
+  private readonly logger = new Logger(FeatureFlagsController.name);
+
   constructor(private readonly configService: SystemConfigService) {}
 
   @Get()
@@ -70,7 +74,11 @@ export class FeatureFlagsController {
   @ApiOperation({ summary: 'Update feature flag values (Admin only)' })
   async update(
     @Body() dto: UpdateFeatureFlagsDto,
+    @CurrentUser() user?: User,
   ): Promise<FeatureFlagsResponse> {
+    // Snapshot pre-write state so the audit log can diff the change.
+    const before = await this.get();
+
     if (dto.useMapView !== undefined) {
       await this.configService.update(ConfigKey.USE_MAP_VIEW, {
         key: ConfigKey.USE_MAP_VIEW,
@@ -92,6 +100,39 @@ export class FeatureFlagsController {
         dataType: 'boolean',
       });
     }
-    return this.get();
+
+    const after = await this.get();
+
+    // Structured audit log line — kept lightweight (no DB write) so
+    // this commit doesn't need a migration. Centralised aggregator
+    // (Loki/Datadog) ingests `system_config.changed` to attribute
+    // ops-affecting flag flips to a named admin.
+    this.logFlagDiff('useMapView', before.useMapView, after.useMapView, user);
+    this.logFlagDiff(
+      'vehicleEditGraceMode',
+      before.vehicleEditGraceMode,
+      after.vehicleEditGraceMode,
+      user,
+    );
+    this.logFlagDiff(
+      'orderPaymentProofRequired',
+      before.orderPaymentProofRequired,
+      after.orderPaymentProofRequired,
+      user,
+    );
+
+    return after;
+  }
+
+  private logFlagDiff(
+    name: string,
+    prev: unknown,
+    next: unknown,
+    user?: User,
+  ): void {
+    if (prev === next) return;
+    this.logger.log(
+      `system_config.changed flag=${name} prev=${JSON.stringify(prev)} next=${JSON.stringify(next)} actor=${user?.id ?? 'unknown'} actorEmail=${user?.email ?? 'unknown'}`,
+    );
   }
 }

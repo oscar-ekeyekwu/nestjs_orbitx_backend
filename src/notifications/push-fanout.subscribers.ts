@@ -92,6 +92,10 @@ export interface OrderCustomerMarkedPaidEvent {
   driverId: string;
   amountNaira: number;
   customerName: string;
+  /** Phase 3 — true when the customer attached a transfer
+   *  screenshot. Lets the push body distinguish a bare claim from
+   *  a substantiated one. */
+  hasProof?: boolean;
 }
 
 // Phase 3 — driver confirmed receipt. Emitted by
@@ -324,15 +328,26 @@ export class PushFanoutEventSubscribers {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     })}`;
+    // Phase 3 — when the customer attached a screenshot, surface it
+    // in the title so the driver knows the claim is backed by a
+    // visual receipt before opening the app. Both bodies funnel into
+    // the same "check + Confirm receipt" instruction.
+    const title = event.hasProof
+      ? 'Customer paid — screenshot attached'
+      : 'Customer says they’ve paid';
+    const proofSuffix = event.hasProof
+      ? ' Compare with the attached screenshot before confirming.'
+      : '';
     void this.fanout.send(event.driverId, {
       notification: {
-        title: 'Customer says they’ve paid',
-        body: `${event.customerName} marked ${amount} as sent. Check your bank app, then tap Confirm receipt in the app.`,
+        title,
+        body: `${event.customerName} marked ${amount} as sent. Check your bank app, then tap Confirm receipt in the app.${proofSuffix}`,
       },
       data: {
         kind: 'order.customer_marked_paid',
         orderId: event.orderId,
         amountNaira: String(event.amountNaira),
+        hasProof: event.hasProof ? 'true' : 'false',
       },
     });
   }
