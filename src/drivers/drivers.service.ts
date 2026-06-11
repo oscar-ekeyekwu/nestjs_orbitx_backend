@@ -529,6 +529,18 @@ export class DriversService {
       }
     }
 
+    // Phase 3 — bank-account gate. A driver without a payout account
+    // can still receive deliveries, but the customer's tracking screen
+    // falls back to the platform bank account so the money lands in
+    // the WRONG hands (platform reconciles out-of-band, which is ops
+    // toil we'd rather not generate). Hard-block here so the gap is
+    // caught at the toggle point instead of after dispatch. Going
+    // offline is unconditional — drivers must always be able to drop
+    // out, regardless of whether they ever set bank details.
+    if (isOnline) {
+      this.assertDriverHasBankAccount(profile);
+    }
+
     // B5: going online requires an APPROVED vehicle the driver can
     // actually drive. For an individual driver that's a vehicle owned
     // by (INDIVIDUAL_DRIVER, profile.id). For a company owner that's
@@ -608,6 +620,24 @@ export class DriversService {
    *
    * The vehicle picked from any of those routes must be `APPROVED`.
    */
+  /**
+   * Phase 3 — block the online toggle when the driver hasn't filled
+   * their payout bank details. Throws a friendly BadRequestException
+   * the mobile catches and renders as "set up your payout account
+   * before going online".
+   */
+  private assertDriverHasBankAccount(profile: DriverProfile): void {
+    if (
+      !profile.bankName ||
+      !profile.bankAccountName ||
+      !profile.bankAccountNumber
+    ) {
+      throw new BadRequestException(
+        'Add your payout bank account before going online — customers transfer their delivery fee directly to it.',
+      );
+    }
+  }
+
   private async assertHasActiveApprovedVehicle(
     profile: DriverProfile,
   ): Promise<Vehicle> {

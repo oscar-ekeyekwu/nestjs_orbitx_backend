@@ -181,7 +181,16 @@ describe('DriversService', () => {
   });
 
   describe('updateOnlineStatus — going online (B5 gating)', () => {
-    const profile = { id: 'p1', userId: 'u1', isOnline: false };
+    // Bank fields populated so the Phase 3 bank-account gate passes
+    // and these existing tests keep exercising the vehicle gate.
+    const profile = {
+      id: 'p1',
+      userId: 'u1',
+      isOnline: false,
+      bankName: 'GTBank',
+      bankAccountName: 'Tunde Bello',
+      bankAccountNumber: '0123456789',
+    };
 
     it('allows isOnline=true when driver has an active assignment to an APPROVED vehicle', async () => {
       driverRepo.findOne.mockResolvedValue(profile);
@@ -258,6 +267,68 @@ describe('DriversService', () => {
     });
   });
 
+  describe('updateOnlineStatus — Phase 3 bank-account gate', () => {
+    it('rejects going online when bankName is missing', async () => {
+      driverRepo.findOne.mockResolvedValue({
+        id: 'p1',
+        userId: 'u1',
+        isOnline: false,
+        bankName: null,
+        bankAccountName: 'Tunde Bello',
+        bankAccountNumber: '0123456789',
+      });
+
+      await expect(
+        service.updateOnlineStatus('u1', true),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects when bankAccountName is missing', async () => {
+      driverRepo.findOne.mockResolvedValue({
+        id: 'p1',
+        userId: 'u1',
+        isOnline: false,
+        bankName: 'GTBank',
+        bankAccountName: null,
+        bankAccountNumber: '0123456789',
+      });
+
+      await expect(
+        service.updateOnlineStatus('u1', true),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects when bankAccountNumber is missing', async () => {
+      driverRepo.findOne.mockResolvedValue({
+        id: 'p1',
+        userId: 'u1',
+        isOnline: false,
+        bankName: 'GTBank',
+        bankAccountName: 'Tunde Bello',
+        bankAccountNumber: null,
+      });
+
+      await expect(
+        service.updateOnlineStatus('u1', true),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('lets the driver go OFFLINE even with no bank account set', async () => {
+      driverRepo.findOne.mockResolvedValue({
+        id: 'p1',
+        userId: 'u1',
+        isOnline: true,
+        bankName: null,
+        bankAccountName: null,
+        bankAccountNumber: null,
+      });
+      driverRepo.save.mockImplementation((p) => Promise.resolve(p));
+
+      const result = await service.updateOnlineStatus('u1', false);
+      expect(result.isOnline).toBe(false);
+    });
+  });
+
   describe('updateOnlineStatus — backfill path (A3 carry)', () => {
     it('backfills the profile for a driver-role user missing one, then runs the eligibility check', async () => {
       // First findOne (findByUserId): no profile yet.
@@ -265,8 +336,19 @@ describe('DriversService', () => {
         .mockResolvedValueOnce(null)
         // Second findOne (inside createProfile): also no row.
         .mockResolvedValueOnce(null);
+      // Backfilled profile includes bank fields so the Phase 3
+      // bank-account gate passes. Backfill is the legacy-data path
+      // (pre-A3 driver registrations); in production a real backfill
+      // could come without bank fields, which would correctly fail
+      // the gate — covered by the dedicated bank-gate spec below.
       driverRepo.save.mockImplementation((p) =>
-        Promise.resolve({ id: 'backfilled', ...p }),
+        Promise.resolve({
+          id: 'backfilled',
+          bankName: 'GTBank',
+          bankAccountName: 'Tunde Bello',
+          bankAccountNumber: '0123456789',
+          ...p,
+        }),
       );
       usersService.findById.mockResolvedValue({
         id: 'u1',

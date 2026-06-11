@@ -233,6 +233,15 @@ export class Order {
   @Column({ type: 'timestamp', nullable: true })
   paymentConfirmedAt: Date | null;
 
+  // Phase 3 — proof image (screenshot of the bank transfer) the
+  // customer uploads at customer_marked_paid time. Required vs
+  // optional is gated by ORDER_PAYMENT_PROOF_REQUIRED (admin-
+  // tunable). When the upload happens we persist the storage URL
+  // here; the driver mobile renders it inside the active-delivery
+  // payment-confirmation banner.
+  @Column({ type: 'text', nullable: true })
+  paymentProofUrl: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

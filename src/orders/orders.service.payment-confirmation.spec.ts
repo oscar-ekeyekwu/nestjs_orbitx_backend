@@ -42,6 +42,11 @@ function buildService(mut: Mut): {
     bankAccountName: string | null;
     bankAccountNumber: string | null;
   }>;
+  configService: {
+    getBoolean: jest.Mock;
+    getNumber: jest.Mock;
+    getString: jest.Mock;
+  };
 } {
   const driverBankRows: Array<{
     bankName: string | null;
@@ -61,6 +66,9 @@ function buildService(mut: Mut): {
   const realtimeGateway = { emitOrderStatusUpdate: jest.fn() };
   const eventEmitter = { emit: jest.fn() };
   const configService = {
+    // Default proof-required to OFF so existing tests keep passing.
+    // Tests that need the gate ON override this on the returned mock.
+    getBoolean: jest.fn().mockResolvedValue(false),
     getNumber: jest.fn().mockResolvedValue(0),
     getString: jest.fn().mockResolvedValue(''),
   };
@@ -77,7 +85,13 @@ function buildService(mut: Mut): {
     undefined,
   );
 
-  return { service, realtimeGateway, eventEmitter, driverBankRows };
+  return {
+    service,
+    realtimeGateway,
+    eventEmitter,
+    driverBankRows,
+    configService,
+  };
 }
 
 describe('OrdersService.markCustomerPaid', () => {
@@ -136,6 +150,66 @@ describe('OrdersService.markCustomerPaid', () => {
     await expect(
       service.markCustomerPaid('missing', 'cust-1'),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  describe('proof-required gate (ORDER_PAYMENT_PROOF_REQUIRED)', () => {
+    it('rejects when the flag is ON and no proofUrl is passed', async () => {
+      const mut: Mut = { order: makeOrder() };
+      const { service, configService } = buildService(mut);
+      configService.getBoolean.mockResolvedValue(true);
+
+      await expect(
+        service.markCustomerPaid('order-1', 'cust-1'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('accepts the mark when the flag is ON and a proofUrl is passed', async () => {
+      const mut: Mut = { order: makeOrder() };
+      const { service, configService } = buildService(mut);
+      configService.getBoolean.mockResolvedValue(true);
+
+      const result = await service.markCustomerPaid(
+        'order-1',
+        'cust-1',
+        'https://storage/proof.jpg',
+      );
+      expect(result.paymentStatus).toBe(
+        OrderPaymentStatus.CUSTOMER_MARKED_PAID,
+      );
+      expect(result.paymentProofUrl).toBe('https://storage/proof.jpg');
+    });
+
+    it('treats whitespace-only proofUrl as missing when flag is ON', async () => {
+      const mut: Mut = { order: makeOrder() };
+      const { service, configService } = buildService(mut);
+      configService.getBoolean.mockResolvedValue(true);
+
+      await expect(
+        service.markCustomerPaid('order-1', 'cust-1', '   '),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('accepts mark without proof when the flag is OFF (default)', async () => {
+      const mut: Mut = { order: makeOrder() };
+      const { service } = buildService(mut); // getBoolean defaults false
+
+      const result = await service.markCustomerPaid('order-1', 'cust-1');
+      expect(result.paymentStatus).toBe(
+        OrderPaymentStatus.CUSTOMER_MARKED_PAID,
+      );
+    });
+
+    it('still persists a volunteered proof when flag is OFF', async () => {
+      const mut: Mut = { order: makeOrder() };
+      const { service } = buildService(mut);
+
+      const result = await service.markCustomerPaid(
+        'order-1',
+        'cust-1',
+        'https://storage/proof.jpg',
+      );
+      expect(result.paymentProofUrl).toBe('https://storage/proof.jpg');
+    });
   });
 });
 

@@ -498,6 +498,156 @@ describe('OrderRequestsService', () => {
     });
   });
 
+  describe('findAvailableForDriver', () => {
+    function buildWithDriverState(opts: {
+      driverProfile: {
+        isOnline: boolean;
+        verificationStatus: string;
+        isOnDelivery: boolean;
+        currentLatitude: string | null;
+        currentLongitude: string | null;
+      } | null;
+      walletBalance?: number;
+      hasActiveOffer?: boolean;
+      requests?: OrderRequest[];
+    }) {
+      const built = buildService(state);
+      const repo = (
+        built.service as unknown as {
+          requestsRepo: {
+            query: jest.Mock;
+            find: jest.Mock;
+          };
+          offersRepo: {
+            findOne: jest.Mock;
+          };
+        }
+      ).requestsRepo;
+      const offersRepo = (
+        built.service as unknown as {
+          offersRepo: { findOne: jest.Mock };
+        }
+      ).offersRepo;
+
+      repo.query = jest.fn((sql: string) => {
+        if (sql.includes('driver_profiles')) {
+          return Promise.resolve(
+            opts.driverProfile ? [opts.driverProfile] : [],
+          );
+        }
+        if (sql.includes('wallets')) {
+          return Promise.resolve(
+            opts.walletBalance !== undefined
+              ? [{ balance: String(opts.walletBalance) }]
+              : [],
+          );
+        }
+        return Promise.resolve([]);
+      });
+      repo.find = jest.fn().mockResolvedValue(opts.requests ?? []);
+      offersRepo.findOne = jest
+        .fn()
+        .mockResolvedValue(opts.hasActiveOffer ? { id: 'lock' } : null);
+
+      return built;
+    }
+
+    it('returns [] when the driver profile does not exist', async () => {
+      const { service } = buildWithDriverState({ driverProfile: null });
+      expect(await service.findAvailableForDriver('driver-1')).toEqual([]);
+    });
+
+    it('returns [] when the driver is offline', async () => {
+      const { service } = buildWithDriverState({
+        driverProfile: {
+          isOnline: false,
+          verificationStatus: 'active',
+          isOnDelivery: false,
+          currentLatitude: '6.5',
+          currentLongitude: '3.3',
+        },
+      });
+      expect(await service.findAvailableForDriver('driver-1')).toEqual([]);
+    });
+
+    it('returns [] when the driver is on a delivery', async () => {
+      const { service } = buildWithDriverState({
+        driverProfile: {
+          isOnline: true,
+          verificationStatus: 'active',
+          isOnDelivery: true,
+          currentLatitude: '6.5',
+          currentLongitude: '3.3',
+        },
+      });
+      expect(await service.findAvailableForDriver('driver-1')).toEqual([]);
+    });
+
+    it('returns [] when the driver has a pending offer (single-active-offer)', async () => {
+      const { service } = buildWithDriverState({
+        driverProfile: {
+          isOnline: true,
+          verificationStatus: 'active',
+          isOnDelivery: false,
+          currentLatitude: '6.5',
+          currentLongitude: '3.3',
+        },
+        hasActiveOffer: true,
+      });
+      expect(await service.findAvailableForDriver('driver-1')).toEqual([]);
+    });
+
+    it('filters out requests whose wallet cost exceeds driver balance', async () => {
+      const expensive = makeRequest({
+        id: 'req-expensive',
+        platformCharge: naira('500'),
+        insuranceFee: naira('200'),
+      });
+      const cheap = makeRequest({
+        id: 'req-cheap',
+        platformCharge: naira('100'),
+        insuranceFee: naira('50'),
+      });
+      const { service } = buildWithDriverState({
+        driverProfile: {
+          isOnline: true,
+          verificationStatus: 'active',
+          isOnDelivery: false,
+          currentLatitude: '6.5',
+          currentLongitude: '3.3',
+        },
+        walletBalance: 200,
+        requests: [expensive, cheap],
+      });
+
+      const result = await service.findAvailableForDriver('driver-1');
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('req-cheap');
+    });
+
+    it('filters out requests past their expiresAt', async () => {
+      const expired = makeRequest({
+        id: 'req-expired',
+        expiresAt: new Date(Date.now() - 1_000),
+      });
+      const fresh = makeRequest({ id: 'req-fresh' });
+      const { service } = buildWithDriverState({
+        driverProfile: {
+          isOnline: true,
+          verificationStatus: 'active',
+          isOnDelivery: false,
+          currentLatitude: '6.5',
+          currentLongitude: '3.3',
+        },
+        walletBalance: 10_000,
+        requests: [expired, fresh],
+      });
+
+      const result = await service.findAvailableForDriver('driver-1');
+      expect(result.map((r) => r.id)).toEqual(['req-fresh']);
+    });
+  });
+
   describe('findOwnOpen', () => {
     it('passes a find query scoped to the caller + status=open', async () => {
       const { service } = buildService(state);
