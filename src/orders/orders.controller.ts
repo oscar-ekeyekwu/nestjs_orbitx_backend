@@ -150,10 +150,18 @@ export class OrdersController {
   @Roles(UserRole.CUSTOMER)
   @ApiOperation({
     summary:
-      'Customer marks "I\'ve sent the bank transfer". Flips paymentStatus to customer_marked_paid + notifies the driver.',
+      'Customer marks "I\'ve sent the bank transfer". Flips paymentStatus to customer_marked_paid + notifies the driver. Body may include a `proofUrl` from POST /upload/image; required when admin has flipped ORDER_PAYMENT_PROOF_REQUIRED on.',
   })
-  customerMarkPaid(@Param('id') id: string, @CurrentUser() user: User) {
-    return this.ordersService.markCustomerPaid(id, user.id);
+  customerMarkPaid(
+    @Param('id') id: string,
+    @Body() body: { proofUrl?: string | null },
+    @CurrentUser() user: User,
+  ) {
+    return this.ordersService.markCustomerPaid(
+      id,
+      user.id,
+      body?.proofUrl ?? null,
+    );
   }
 
   @Post(':id/confirm-payment-received')

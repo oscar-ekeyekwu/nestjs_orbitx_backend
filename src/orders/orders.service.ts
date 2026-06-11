@@ -866,6 +866,7 @@ export class OrdersService {
   async markCustomerPaid(
     orderId: string,
     customerId: string,
+    proofUrl?: string | null,
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
@@ -888,8 +889,27 @@ export class OrdersService {
       );
     }
 
+    // Phase 3 — admin-gated proof requirement. When the toggle is ON
+    // the customer can't mark paid without attaching a proof URL.
+    // The mobile is responsible for uploading the image via
+    // POST /upload/image first and threading the returned URL here.
+    const proofRequired = await this.configService.getBoolean(
+      ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED,
+      false,
+    );
+    const trimmed =
+      typeof proofUrl === 'string' ? proofUrl.trim() : null;
+    if (proofRequired && !trimmed) {
+      throw new BadRequestException(
+        'A screenshot of your bank transfer is required. Attach a proof image and try again.',
+      );
+    }
+
     order.paymentStatus = OrderPaymentStatus.CUSTOMER_MARKED_PAID;
     order.customerMarkedPaidAt = new Date();
+    if (trimmed) {
+      order.paymentProofUrl = trimmed;
+    }
     const saved = await this.ordersRepository.save(order);
 
     this.logger.log(

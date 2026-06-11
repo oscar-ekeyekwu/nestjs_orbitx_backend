@@ -18,11 +18,18 @@ class UpdateFeatureFlagsDto {
   @IsOptional()
   @IsIn(['continue', 'lock'])
   vehicleEditGraceMode?: VehicleEditGraceMode;
+
+  // Phase 3 — when true, customers must attach a screenshot of their
+  // bank transfer at customer_marked_paid time.
+  @IsOptional()
+  @IsBoolean()
+  orderPaymentProofRequired?: boolean;
 }
 
 interface FeatureFlagsResponse {
   useMapView: boolean;
   vehicleEditGraceMode: VehicleEditGraceMode;
+  orderPaymentProofRequired: boolean;
 }
 
 @ApiTags('Configuration')
@@ -50,7 +57,11 @@ export class FeatureFlagsController {
     );
     const vehicleEditGraceMode: VehicleEditGraceMode =
       raw === 'lock' ? 'lock' : 'continue';
-    return { useMapView, vehicleEditGraceMode };
+    const orderPaymentProofRequired = await this.configService.getBoolean(
+      ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED,
+      false,
+    );
+    return { useMapView, vehicleEditGraceMode, orderPaymentProofRequired };
   }
 
   @Put()
@@ -72,6 +83,13 @@ export class FeatureFlagsController {
         key: ConfigKey.VEHICLE_EDIT_GRACE_MODE,
         value: dto.vehicleEditGraceMode,
         dataType: 'string',
+      });
+    }
+    if (dto.orderPaymentProofRequired !== undefined) {
+      await this.configService.update(ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED, {
+        key: ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED,
+        value: String(dto.orderPaymentProofRequired),
+        dataType: 'boolean',
       });
     }
     return this.get();

@@ -33,7 +33,7 @@ import { ConfigKey } from '../config/enums/config-keys.enum';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { UserRole } from '../common/enums/user-role.enum';
 import { PaymentMethod } from '../wallet/enums/payment-method.enum';
-import { assertInsideLagos, assertInsideNigeria } from '../common/geo';
+import { assertInsideLagos, assertInsideNigeria, haversineKm } from '../common/geo';
 import { Naira, naira } from '../common/money';
 import Decimal from 'decimal.js';
 
@@ -636,6 +636,114 @@ export class OrderRequestsService {
       where: { requestId: request.id },
       order: { createdAt: 'ASC' },
     });
+  }
+
+  // -------- Driver-side available list -----------------------------
+
+  /**
+   * Returns the open OrderRequests this driver is eligible to act on
+   * — used by the driver mobile to browse requests if they missed
+   * the live socket push. Mirrors the eligibility checks the
+   * push-fanout subscriber applies at request-creation time:
+   *
+   *   - status = open
+   *   - driver isOnline + verificationStatus = active + !isOnDelivery
+   *   - within ORDER_REQUEST_RADIUS_KM of pickup
+   *   - wallet.balance >= platformCharge + insuranceFee
+   *   - driver has no other pending offer (single-active-offer rule)
+   *
+   * Returns the requests with the driver's current
+   * distanceFromDriverKm pre-computed so the mobile list can sort
+   * by proximity without re-deriving it.
+   */
+  async findAvailableForDriver(driverId: string): Promise<
+    Array<
+      OrderRequest & {
+        distanceFromDriverKm: number;
+      }
+    >
+  > {
+    // Driver gate — must be online + active + idle, and have a
+    // current location so we can compute the radius filter.
+    const profileRows = (await this.requestsRepo.query(
+      `SELECT "isOnline", "verificationStatus", "isOnDelivery",
+              "currentLatitude", "currentLongitude"
+       FROM driver_profiles
+       WHERE "userId" = $1
+       LIMIT 1`,
+      [driverId],
+    )) as Array<{
+      isOnline: boolean;
+      verificationStatus: string;
+      isOnDelivery: boolean;
+      currentLatitude: string | null;
+      currentLongitude: string | null;
+    }>;
+    const profile = profileRows[0];
+    if (!profile) return [];
+    if (
+      !profile.isOnline ||
+      profile.verificationStatus !== 'active' ||
+      profile.isOnDelivery ||
+      profile.currentLatitude == null ||
+      profile.currentLongitude == null
+    ) {
+      return [];
+    }
+
+    // Single-active-offer guard — if the driver already has one
+    // pending offer, they can't pick a second so return nothing.
+    const activeOffer = await this.offersRepo.findOne({
+      where: { driverId, status: DispatchOfferStatus.PENDING },
+    });
+    if (activeOffer) return [];
+
+    const radiusKm = await this.configService.getNumber(
+      ConfigKey.ORDER_REQUEST_RADIUS_KM,
+      5,
+    );
+
+    // Driver wallet balance for the wallet-coverage filter.
+    const walletRows = (await this.requestsRepo.query(
+      `SELECT balance FROM wallets WHERE "userId" = $1 LIMIT 1`,
+      [driverId],
+    )) as Array<{ balance: string }>;
+    const walletBalance = walletRows[0]
+      ? Number(walletRows[0].balance)
+      : 0;
+
+    const open = await this.requestsRepo.find({
+      where: { status: OrderRequestStatus.OPEN },
+      order: { createdAt: 'DESC' },
+    });
+
+    const driverLat = Number(profile.currentLatitude);
+    const driverLng = Number(profile.currentLongitude);
+
+    const eligible: Array<
+      OrderRequest & { distanceFromDriverKm: number }
+    > = [];
+    for (const r of open) {
+      // Skip expired (cron will sweep but a fast read can still see
+      // them).
+      if (r.expiresAt.getTime() <= Date.now()) continue;
+      // Wallet coverage gate: platformCharge + insuranceFee.
+      const required =
+        Number(r.platformCharge ?? 0) + Number(r.insuranceFee ?? 0);
+      if (walletBalance < required) continue;
+      const distanceFromDriverKm = haversineKm(
+        driverLat,
+        driverLng,
+        r.pickupLatitude,
+        r.pickupLongitude,
+      );
+      if (distanceFromDriverKm > radiusKm) continue;
+      eligible.push({ ...r, distanceFromDriverKm });
+    }
+    eligible.sort(
+      (a, b) => a.distanceFromDriverKm - b.distanceFromDriverKm,
+    );
+    return eligible;
   }
 
   // -------- Customer list ------------------------------------------
