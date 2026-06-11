@@ -910,9 +910,18 @@ export class OrdersService {
           ),
         'order_status_updated.customer_marked_paid',
       );
+      // Load customer name + final amount so the push body reads
+      // naturally ("Mark Spencer marked ₦1,500 as sent").
+      const withCustomer = await this.ordersRepository.findOne({
+        where: { id: saved.id },
+        relations: ['customer'],
+      });
       this.eventEmitter.emit('order.customer_marked_paid', {
         orderId: saved.id,
         driverId: order.driverId,
+        amountNaira: Number(saved.finalPrice ?? saved.estimatedPrice),
+        customerName:
+          withCustomer?.customer?.name ?? 'The customer',
       });
     }
 
@@ -968,6 +977,13 @@ export class OrdersService {
         ),
       'order_status_updated.payment_confirmed',
     );
+
+    // Push to the customer for the closed-app case.
+    this.eventEmitter.emit('order.payment_confirmed', {
+      orderId: saved.id,
+      customerId: order.customerId,
+      amountNaira: Number(saved.finalPrice ?? saved.estimatedPrice),
+    });
 
     return saved;
   }
