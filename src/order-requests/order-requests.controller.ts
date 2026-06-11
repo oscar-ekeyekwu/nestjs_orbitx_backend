@@ -47,6 +47,17 @@ export class OrderRequestsController {
     return this.service.findOpenForAdmin();
   }
 
+  // Same routing reason — static segment before :id.
+  @Get('me/open')
+  @Roles(UserRole.CUSTOMER)
+  @ApiOperation({
+    summary:
+      'Customer\'s currently-open OrderRequests (status=open). Used by the customer mobile to surface "Resume searching" after the app was killed mid-flow.',
+  })
+  findOwnOpen(@CurrentUser() user: User) {
+    return this.service.findOwnOpen(user.id);
+  }
+
   @Get(':id')
   @ApiOperation({
     summary:

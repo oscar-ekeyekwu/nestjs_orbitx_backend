@@ -638,6 +638,27 @@ export class OrderRequestsService {
     });
   }
 
+  // -------- Customer list ------------------------------------------
+
+  /**
+   * Returns the customer's currently-OPEN requests, freshest first.
+   * The customer mobile calls this on home-screen mount; if the
+   * result is non-empty it surfaces a "Resume searching" card so a
+   * killed-then-relaunched app doesn't strand the in-flight flow.
+   *
+   * Expired/cancelled/resolved requests are filtered out — there's
+   * nothing to resume on those.
+   */
+  async findOwnOpen(customerId: string): Promise<OrderRequest[]> {
+    return this.requestsRepo.find({
+      where: {
+        customerId,
+        status: OrderRequestStatus.OPEN,
+      },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
   // -------- Admin list ---------------------------------------------
 
   /**

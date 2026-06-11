@@ -498,6 +498,29 @@ describe('OrderRequestsService', () => {
     });
   });
 
+  describe('findOwnOpen', () => {
+    it('passes a find query scoped to the caller + status=open', async () => {
+      const { service } = buildService(state);
+      // Spy on the underlying repo's `find` to assert the WHERE clause.
+      // requestsRepo is the first ctor arg — pull it back via the instance.
+      const repo = (
+        service as unknown as {
+          requestsRepo: { find: jest.Mock };
+        }
+      ).requestsRepo;
+      repo.find = jest.fn().mockResolvedValue([state.request]);
+
+      const result = await service.findOwnOpen('cust-1');
+
+      expect(repo.find).toHaveBeenCalledWith({
+        where: { customerId: 'cust-1', status: OrderRequestStatus.OPEN },
+        order: { createdAt: 'DESC' },
+      });
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('req-1');
+    });
+  });
+
   describe('findOneScoped', () => {
     it('returns the request for the owner', async () => {
       const { service } = buildService(state);
