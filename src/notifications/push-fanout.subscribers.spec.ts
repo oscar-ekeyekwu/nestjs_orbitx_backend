@@ -36,7 +36,7 @@ describe('PushFanoutEventSubscribers (ARCH-10)', () => {
   });
 
   describe('Phase 3 payment events', () => {
-    it('order.customer_marked_paid → push the driver with amount + customer name', () => {
+    it('order.customer_marked_paid (no proof) → push the driver with amount + customer name', () => {
       subs.onCustomerMarkedPaid({
         orderId: 'order-1',
         driverId: 'driver-1',
@@ -55,7 +55,29 @@ describe('PushFanoutEventSubscribers (ARCH-10)', () => {
             kind: 'order.customer_marked_paid',
             orderId: 'order-1',
             amountNaira: '1500',
+            hasProof: 'false',
           }),
+        }),
+      );
+    });
+
+    it('order.customer_marked_paid (with proof) → swaps title + appends "Compare with screenshot" instruction', () => {
+      subs.onCustomerMarkedPaid({
+        orderId: 'order-1',
+        driverId: 'driver-1',
+        amountNaira: 1500,
+        customerName: 'Mark Spencer',
+        hasProof: true,
+      });
+
+      expect(fanout.send).toHaveBeenCalledWith(
+        'driver-1',
+        expect.objectContaining({
+          notification: expect.objectContaining({
+            title: 'Customer paid — screenshot attached',
+            body: expect.stringMatching(/Compare with the attached screenshot/i),
+          }),
+          data: expect.objectContaining({ hasProof: 'true' }),
         }),
       );
     });

@@ -116,12 +116,20 @@ describe('FeatureFlagsController', () => {
   });
 
   describe('PUT /config/feature-flags', () => {
+    /**
+     * update() now reads the flag state both before AND after the
+     * write so the audit log can diff. Each test below uses always-
+     * returns mocks (mockResolvedValue) so both reads see the same
+     * post-write values — matches what production sees once the
+     * write commits and saves us threading two-pass ordering through
+     * every assertion.
+     */
     it('updates only useMapView when only useMapView is present in the body', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean
-        .mockResolvedValueOnce(false) // USE_MAP_VIEW post-write read
-        .mockResolvedValueOnce(false); // ORDER_PAYMENT_PROOF_REQUIRED read
-      configService.getString.mockResolvedValueOnce('continue');
+      configService.getBoolean.mockImplementation(async (key: string) =>
+        key === ConfigKey.USE_MAP_VIEW ? false : false,
+      );
+      configService.getString.mockResolvedValue('continue');
 
       const result = await controller.update({ useMapView: false });
 
@@ -143,10 +151,8 @@ describe('FeatureFlagsController', () => {
 
     it('updates only vehicleEditGraceMode when only that field is present', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false);
-      configService.getString.mockResolvedValueOnce('lock');
+      configService.getBoolean.mockResolvedValue(true);
+      configService.getString.mockResolvedValue('lock');
 
       const result = await controller.update({ vehicleEditGraceMode: 'lock' });
 
@@ -164,10 +170,8 @@ describe('FeatureFlagsController', () => {
 
     it('updates orderPaymentProofRequired when present in body', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(true);
-      configService.getString.mockResolvedValueOnce('continue');
+      configService.getBoolean.mockResolvedValue(true);
+      configService.getString.mockResolvedValue('continue');
 
       const result = await controller.update({
         orderPaymentProofRequired: true,
@@ -187,10 +191,8 @@ describe('FeatureFlagsController', () => {
 
     it('updates all fields when all are present in the body', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(true);
-      configService.getString.mockResolvedValueOnce('continue');
+      configService.getBoolean.mockResolvedValue(true);
+      configService.getString.mockResolvedValue('continue');
 
       await controller.update({
         useMapView: true,
@@ -199,6 +201,46 @@ describe('FeatureFlagsController', () => {
       });
 
       expect(configService.update).toHaveBeenCalledTimes(3);
+    });
+
+    it('emits an audit log line attributing the flag flip to the actor', async () => {
+      configService.update.mockResolvedValue(undefined);
+      // Stateful before/after — first call returns previous state
+      // (false), subsequent calls return next state (true). The
+      // controller invokes getBoolean twice for each get() call
+      // (USE_MAP_VIEW then ORDER_PAYMENT_PROOF_REQUIRED).
+      const sequence = [false, false, true, true]; // before, before, after, after
+      let i = 0;
+      configService.getBoolean.mockImplementation(async () => {
+        return sequence[i++] ?? true;
+      });
+      configService.getString.mockResolvedValue('continue');
+
+      const logSpy = jest
+        .spyOn(
+          (controller as unknown as { logger: { log: jest.Mock } }).logger,
+          'log',
+        )
+        .mockImplementation(() => undefined);
+
+      await controller.update(
+        { orderPaymentProofRequired: true },
+        {
+          id: 'admin-1',
+          email: 'jane@orbit.com',
+        } as unknown as Parameters<typeof controller.update>[1],
+      );
+
+      const audited = logSpy.mock.calls.find(([msg]) =>
+        String(msg).includes('orderPaymentProofRequired'),
+      );
+      expect(audited).toBeDefined();
+      const line = String(audited![0]);
+      expect(line).toMatch(/system_config\.changed/);
+      expect(line).toMatch(/prev=false/);
+      expect(line).toMatch(/next=true/);
+      expect(line).toMatch(/actor=admin-1/);
+      expect(line).toMatch(/actorEmail=jane@orbit\.com/);
     });
   });
 });
