@@ -38,8 +38,12 @@ describe('FeatureFlagsController', () => {
   });
 
   describe('GET /config/feature-flags', () => {
-    it('returns { useMapView: true, vehicleEditGraceMode: "continue" } when both config values default', async () => {
-      configService.getBoolean.mockResolvedValueOnce(true);
+    it('returns { useMapView: true, vehicleEditGraceMode: "continue", orderPaymentProofRequired: false } when all config values default', async () => {
+      // get() now calls getBoolean twice — first for USE_MAP_VIEW,
+      // then for ORDER_PAYMENT_PROOF_REQUIRED. Mock both in order.
+      configService.getBoolean
+        .mockResolvedValueOnce(true) // USE_MAP_VIEW
+        .mockResolvedValueOnce(false); // ORDER_PAYMENT_PROOF_REQUIRED
       configService.getString.mockResolvedValueOnce('continue');
 
       const result = await controller.get();
@@ -47,10 +51,15 @@ describe('FeatureFlagsController', () => {
       expect(result).toEqual({
         useMapView: true,
         vehicleEditGraceMode: 'continue',
+        orderPaymentProofRequired: false,
       });
       expect(configService.getBoolean).toHaveBeenCalledWith(
         ConfigKey.USE_MAP_VIEW,
         true,
+      );
+      expect(configService.getBoolean).toHaveBeenCalledWith(
+        ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED,
+        false,
       );
       expect(configService.getString).toHaveBeenCalledWith(
         ConfigKey.VEHICLE_EDIT_GRACE_MODE,
@@ -59,7 +68,9 @@ describe('FeatureFlagsController', () => {
     });
 
     it('returns vehicleEditGraceMode: "lock" when the config value is "lock"', async () => {
-      configService.getBoolean.mockResolvedValueOnce(true);
+      configService.getBoolean
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
       configService.getString.mockResolvedValueOnce('lock');
 
       const result = await controller.get();
@@ -67,11 +78,14 @@ describe('FeatureFlagsController', () => {
       expect(result).toEqual({
         useMapView: true,
         vehicleEditGraceMode: 'lock',
+        orderPaymentProofRequired: false,
       });
     });
 
     it('collapses any unknown grace-mode value to "continue" (safer default)', async () => {
-      configService.getBoolean.mockResolvedValueOnce(true);
+      configService.getBoolean
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
       configService.getString.mockResolvedValueOnce('garbage');
 
       const result = await controller.get();
@@ -80,20 +94,42 @@ describe('FeatureFlagsController', () => {
     });
 
     it('returns { useMapView: false } when USE_MAP_VIEW is off', async () => {
-      configService.getBoolean.mockResolvedValueOnce(false);
+      configService.getBoolean
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false);
       configService.getString.mockResolvedValueOnce('continue');
 
       const result = await controller.get();
 
       expect(result.useMapView).toBe(false);
     });
+
+    it('returns orderPaymentProofRequired: true when the flag is on', async () => {
+      configService.getBoolean
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true);
+      configService.getString.mockResolvedValueOnce('continue');
+
+      const result = await controller.get();
+      expect(result.orderPaymentProofRequired).toBe(true);
+    });
   });
 
   describe('PUT /config/feature-flags', () => {
+    /**
+     * update() now reads the flag state both before AND after the
+     * write so the audit log can diff. Each test below uses always-
+     * returns mocks (mockResolvedValue) so both reads see the same
+     * post-write values — matches what production sees once the
+     * write commits and saves us threading two-pass ordering through
+     * every assertion.
+     */
     it('updates only useMapView when only useMapView is present in the body', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean.mockResolvedValueOnce(false);
-      configService.getString.mockResolvedValueOnce('continue');
+      configService.getBoolean.mockImplementation(async (key: string) =>
+        key === ConfigKey.USE_MAP_VIEW ? false : false,
+      );
+      configService.getString.mockResolvedValue('continue');
 
       const result = await controller.update({ useMapView: false });
 
@@ -109,13 +145,14 @@ describe('FeatureFlagsController', () => {
       expect(result).toEqual({
         useMapView: false,
         vehicleEditGraceMode: 'continue',
+        orderPaymentProofRequired: false,
       });
     });
 
     it('updates only vehicleEditGraceMode when only that field is present', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean.mockResolvedValueOnce(true);
-      configService.getString.mockResolvedValueOnce('lock');
+      configService.getBoolean.mockResolvedValue(true);
+      configService.getString.mockResolvedValue('lock');
 
       const result = await controller.update({ vehicleEditGraceMode: 'lock' });
 
@@ -131,17 +168,79 @@ describe('FeatureFlagsController', () => {
       expect(result.vehicleEditGraceMode).toBe('lock');
     });
 
-    it('updates both fields when both are present in the body', async () => {
+    it('updates orderPaymentProofRequired when present in body', async () => {
       configService.update.mockResolvedValue(undefined);
-      configService.getBoolean.mockResolvedValueOnce(true);
-      configService.getString.mockResolvedValueOnce('continue');
+      configService.getBoolean.mockResolvedValue(true);
+      configService.getString.mockResolvedValue('continue');
+
+      const result = await controller.update({
+        orderPaymentProofRequired: true,
+      });
+
+      expect(configService.update).toHaveBeenCalledTimes(1);
+      expect(configService.update).toHaveBeenCalledWith(
+        ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED,
+        {
+          key: ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED,
+          value: 'true',
+          dataType: 'boolean',
+        },
+      );
+      expect(result.orderPaymentProofRequired).toBe(true);
+    });
+
+    it('updates all fields when all are present in the body', async () => {
+      configService.update.mockResolvedValue(undefined);
+      configService.getBoolean.mockResolvedValue(true);
+      configService.getString.mockResolvedValue('continue');
 
       await controller.update({
         useMapView: true,
         vehicleEditGraceMode: 'continue',
+        orderPaymentProofRequired: true,
       });
 
-      expect(configService.update).toHaveBeenCalledTimes(2);
+      expect(configService.update).toHaveBeenCalledTimes(3);
+    });
+
+    it('emits an audit log line attributing the flag flip to the actor', async () => {
+      configService.update.mockResolvedValue(undefined);
+      // Stateful before/after — first call returns previous state
+      // (false), subsequent calls return next state (true). The
+      // controller invokes getBoolean twice for each get() call
+      // (USE_MAP_VIEW then ORDER_PAYMENT_PROOF_REQUIRED).
+      const sequence = [false, false, true, true]; // before, before, after, after
+      let i = 0;
+      configService.getBoolean.mockImplementation(async () => {
+        return sequence[i++] ?? true;
+      });
+      configService.getString.mockResolvedValue('continue');
+
+      const logSpy = jest
+        .spyOn(
+          (controller as unknown as { logger: { log: jest.Mock } }).logger,
+          'log',
+        )
+        .mockImplementation(() => undefined);
+
+      await controller.update(
+        { orderPaymentProofRequired: true },
+        {
+          id: 'admin-1',
+          email: 'jane@orbit.com',
+        } as unknown as Parameters<typeof controller.update>[1],
+      );
+
+      const audited = logSpy.mock.calls.find(([msg]) =>
+        String(msg).includes('orderPaymentProofRequired'),
+      );
+      expect(audited).toBeDefined();
+      const line = String(audited![0]);
+      expect(line).toMatch(/system_config\.changed/);
+      expect(line).toMatch(/prev=false/);
+      expect(line).toMatch(/next=true/);
+      expect(line).toMatch(/actor=admin-1/);
+      expect(line).toMatch(/actorEmail=jane@orbit\.com/);
     });
   });
 });
@@ -203,6 +302,10 @@ describe('FeatureFlagsController routing (integration)', () => {
     expect(response.body).toEqual({
       useMapView: true,
       vehicleEditGraceMode: 'continue',
+      // Default mock returns true; the controller maps any truthy
+      // boolean through, so the integration sees true here. The
+      // production default seeded by the migration is 'false'.
+      orderPaymentProofRequired: true,
     });
     // The mock on FeatureFlagsController's collaborator was hit.
     expect(configService.getBoolean).toHaveBeenCalledWith(

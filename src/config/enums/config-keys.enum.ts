@@ -93,6 +93,13 @@ export enum ConfigKey {
   // OrderRequest. Independent of ORDER_DELIVERY_RADIUS_KM so ops can
   // tune the two flows separately as the request-flow ramps.
   ORDER_REQUEST_RADIUS_KM = 'ORDER_REQUEST_RADIUS_KM',
+
+  // Phase 3 — when true, customers MUST attach a proof image
+  // (screenshot of their bank transfer) before they can flip an
+  // order to customer_marked_paid. When false the proof field is
+  // optional; the driver can still see one if the customer
+  // volunteered it. Admin-tunable from Settings → Payment Proof.
+  ORDER_PAYMENT_PROOF_REQUIRED = 'ORDER_PAYMENT_PROOF_REQUIRED',
 }
 
 export const DEFAULT_CONFIG_VALUES: Record<
@@ -276,5 +283,11 @@ export const DEFAULT_CONFIG_VALUES: Record<
     description:
       'Initial driver-eligibility radius around the pickup (km) for an OrderRequest fanout. Independent of ORDER_DELIVERY_RADIUS_KM so the two flows can be tuned separately.',
     dataType: 'number',
+  },
+  [ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED]: {
+    value: 'false',
+    description:
+      'When true, customers must attach a proof image (screenshot of their bank transfer) before they can mark an order paid. When false the proof field is optional. Admins tune from Settings → Payment Proof.',
+    dataType: 'boolean',
   },
 };

@@ -77,6 +77,34 @@ export interface OrderCreatedEvent {
   pickupLatitude: number;
   pickupLongitude: number;
   platformChargeNaira: number;
+  // Phase 2 dispatch — set to 'order_request' when this event is
+  // emitted from the OrderRequest flow (not a direct order create).
+  // Lets the push subscriber switch the title from "New order" to
+  // "New delivery request" without splitting into a second event.
+  source?: 'order' | 'order_request';
+}
+
+// Phase 3 — customer ticked "I've sent the transfer". Emitted by
+// OrdersService.markCustomerPaid; the push subscriber forwards a
+// notification to the assigned driver so they check their bank app.
+export interface OrderCustomerMarkedPaidEvent {
+  orderId: string;
+  driverId: string;
+  amountNaira: number;
+  customerName: string;
+  /** Phase 3 — true when the customer attached a transfer
+   *  screenshot. Lets the push body distinguish a bare claim from
+   *  a substantiated one. */
+  hasProof?: boolean;
+}
+
+// Phase 3 — driver confirmed receipt. Emitted by
+// OrdersService.confirmPaymentReceived; the push subscriber forwards
+// a confirmation to the customer.
+export interface OrderPaymentConfirmedEvent {
+  orderId: string;
+  customerId: string;
+  amountNaira: number;
 }
 
 /**
@@ -272,13 +300,17 @@ export class PushFanoutEventSubscribers {
       'en-NG',
       { minimumFractionDigits: 0, maximumFractionDigits: 0 },
     )}`;
+    // Phase 2 — switch the title + tap-target when the event came
+    // from the OrderRequest flow. The driver mobile reads `kind` on
+    // tap to decide which screen to deep-link to.
+    const isRequest = event.source === 'order_request';
     const payload = {
       notification: {
-        title: 'New delivery available',
+        title: isRequest ? 'New delivery request' : 'New delivery available',
         body: `${priceText} · ${truncateAddress(event.pickupAddress)} → ${truncateAddress(event.deliveryAddress)}`,
       },
       data: {
-        kind: 'order.created',
+        kind: isRequest ? 'order_request.created' : 'order.created',
         orderId: event.orderId,
         packageSize: event.packageSize,
         platformChargeNaira: String(event.platformChargeNaira),
@@ -287,6 +319,56 @@ export class PushFanoutEventSubscribers {
     for (const driver of nearby) {
       void this.fanout.send(driver.userId, payload);
     }
+  }
+
+  // ────────────────────────────────── Phase 3 payment-confirmation
+  @OnEvent('order.customer_marked_paid')
+  onCustomerMarkedPaid(event: OrderCustomerMarkedPaidEvent): void {
+    const amount = `₦${Number(event.amountNaira).toLocaleString('en-NG', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    })}`;
+    // Phase 3 — when the customer attached a screenshot, surface it
+    // in the title so the driver knows the claim is backed by a
+    // visual receipt before opening the app. Both bodies funnel into
+    // the same "check + Confirm receipt" instruction.
+    const title = event.hasProof
+      ? 'Customer paid — screenshot attached'
+      : 'Customer says they’ve paid';
+    const proofSuffix = event.hasProof
+      ? ' Compare with the attached screenshot before confirming.'
+      : '';
+    void this.fanout.send(event.driverId, {
+      notification: {
+        title,
+        body: `${event.customerName} marked ${amount} as sent. Check your bank app, then tap Confirm receipt in the app.${proofSuffix}`,
+      },
+      data: {
+        kind: 'order.customer_marked_paid',
+        orderId: event.orderId,
+        amountNaira: String(event.amountNaira),
+        hasProof: event.hasProof ? 'true' : 'false',
+      },
+    });
+  }
+
+  @OnEvent('order.payment_confirmed')
+  onPaymentConfirmed(event: OrderPaymentConfirmedEvent): void {
+    const amount = `₦${Number(event.amountNaira).toLocaleString('en-NG', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    })}`;
+    void this.fanout.send(event.customerId, {
+      notification: {
+        title: 'Payment confirmed',
+        body: `Your driver confirmed receipt of ${amount}. Thank you for using Orbit.`,
+      },
+      data: {
+        kind: 'order.payment_confirmed',
+        orderId: event.orderId,
+        amountNaira: String(event.amountNaira),
+      },
+    });
   }
 
   // ────────────────────────────────── Wallet funding events

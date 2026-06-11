@@ -47,6 +47,27 @@ export class OrderRequestsController {
     return this.service.findOpenForAdmin();
   }
 
+  // Same routing reason — static segment before :id.
+  @Get('me/open')
+  @Roles(UserRole.CUSTOMER)
+  @ApiOperation({
+    summary:
+      'Customer\'s currently-open OrderRequests (status=open). Used by the customer mobile to surface "Resume searching" after the app was killed mid-flow.',
+  })
+  findOwnOpen(@CurrentUser() user: User) {
+    return this.service.findOwnOpen(user.id);
+  }
+
+  @Get('driver/available')
+  @Roles(UserRole.DRIVER)
+  @ApiOperation({
+    summary:
+      'Open OrderRequests this driver is eligible for (within radius, package-size match, wallet covers charge+insurance). Used by the driver mobile to browse requests they missed via the live socket.',
+  })
+  findAvailableForDriver(@CurrentUser() user: User) {
+    return this.service.findAvailableForDriver(user.id);
+  }
+
   @Get(':id')
   @ApiOperation({
     summary:

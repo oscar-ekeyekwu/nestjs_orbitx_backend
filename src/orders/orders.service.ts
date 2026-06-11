@@ -944,6 +944,7 @@ export class OrdersService {
   async markCustomerPaid(
     orderId: string,
     customerId: string,
+    proofUrl?: string | null,
   ): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
@@ -966,8 +967,27 @@ export class OrdersService {
       );
     }
 
+    // Phase 3 — admin-gated proof requirement. When the toggle is ON
+    // the customer can't mark paid without attaching a proof URL.
+    // The mobile is responsible for uploading the image via
+    // POST /upload/image first and threading the returned URL here.
+    const proofRequired = await this.configService.getBoolean(
+      ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED,
+      false,
+    );
+    const trimmed =
+      typeof proofUrl === 'string' ? proofUrl.trim() : null;
+    if (proofRequired && !trimmed) {
+      throw new BadRequestException(
+        'A screenshot of your bank transfer is required. Attach a proof image and try again.',
+      );
+    }
+
     order.paymentStatus = OrderPaymentStatus.CUSTOMER_MARKED_PAID;
     order.customerMarkedPaidAt = new Date();
+    if (trimmed) {
+      order.paymentProofUrl = trimmed;
+    }
     const saved = await this.ordersRepository.save(order);
 
     this.logger.log(
@@ -988,9 +1008,21 @@ export class OrdersService {
           ),
         'order_status_updated.customer_marked_paid',
       );
+      // Load customer name + final amount so the push body reads
+      // naturally ("Mark Spencer marked ₦1,500 as sent").
+      const withCustomer = await this.ordersRepository.findOne({
+        where: { id: saved.id },
+        relations: ['customer'],
+      });
       this.eventEmitter.emit('order.customer_marked_paid', {
         orderId: saved.id,
         driverId: order.driverId,
+        amountNaira: Number(saved.finalPrice ?? saved.estimatedPrice),
+        customerName:
+          withCustomer?.customer?.name ?? 'The customer',
+        // Sprint 5 — pass through whether a proof screenshot was
+        // attached so the push template can switch its title.
+        hasProof: !!saved.paymentProofUrl,
       });
     }
 
@@ -1046,6 +1078,13 @@ export class OrdersService {
         ),
       'order_status_updated.payment_confirmed',
     );
+
+    // Push to the customer for the closed-app case.
+    this.eventEmitter.emit('order.payment_confirmed', {
+      orderId: saved.id,
+      customerId: order.customerId,
+      amountNaira: Number(saved.finalPrice ?? saved.estimatedPrice),
+    });
 
     return saved;
   }

@@ -116,4 +116,44 @@ describe('PushFanoutEventSubscribers.onOrderCreated — proximity dispatch', () 
     expect(balanceClause).toBeDefined();
     expect(balanceClause?.[1]).toEqual({ charge: 350 });
   });
+
+  describe('Phase 2 — request vs direct-order push title', () => {
+    it('uses the direct-order title when source is unset', async () => {
+      const { subscriber, send } = buildSubscriber([
+        { userId: 'near', currentLatitude: 6.5, currentLongitude: 3.3 },
+      ]);
+
+      await subscriber.onOrderCreated(event());
+
+      expect(send).toHaveBeenCalledWith(
+        'near',
+        expect.objectContaining({
+          notification: expect.objectContaining({
+            title: 'New delivery available',
+          }),
+          data: expect.objectContaining({ kind: 'order.created' }),
+        }),
+      );
+    });
+
+    it('switches title + data.kind when source=order_request', async () => {
+      const { subscriber, send } = buildSubscriber([
+        { userId: 'near', currentLatitude: 6.5, currentLongitude: 3.3 },
+      ]);
+
+      await subscriber.onOrderCreated(event({ source: 'order_request' }));
+
+      expect(send).toHaveBeenCalledWith(
+        'near',
+        expect.objectContaining({
+          notification: expect.objectContaining({
+            title: 'New delivery request',
+          }),
+          data: expect.objectContaining({
+            kind: 'order_request.created',
+          }),
+        }),
+      );
+    });
+  });
 });
