@@ -196,6 +196,12 @@ export class OrderRequestsService {
       pickupLatitude: saved.pickupLatitude,
       pickupLongitude: saved.pickupLongitude,
       platformChargeNaira: Number(saved.platformCharge ?? 0),
+      // Phase 2 dispatch — discriminates the request flow from a
+      // direct order create so the push subscriber can swap the
+      // title ("New delivery request" vs "New delivery available")
+      // and the data.kind ("order_request.created" vs
+      // "order.created"). Mobile reads data.kind to deep-link.
+      source: 'order_request',
     });
 
     return saved;

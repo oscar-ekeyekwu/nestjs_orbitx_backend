@@ -35,6 +35,54 @@ describe('PushFanoutEventSubscribers (ARCH-10)', () => {
     );
   });
 
+  describe('Phase 3 payment events', () => {
+    it('order.customer_marked_paid → push the driver with amount + customer name', () => {
+      subs.onCustomerMarkedPaid({
+        orderId: 'order-1',
+        driverId: 'driver-1',
+        amountNaira: 1500,
+        customerName: 'Mark Spencer',
+      });
+
+      expect(fanout.send).toHaveBeenCalledWith(
+        'driver-1',
+        expect.objectContaining({
+          notification: expect.objectContaining({
+            title: expect.stringMatching(/Customer says/i),
+            body: expect.stringMatching(/Mark Spencer.*₦1,500.*Confirm receipt/i),
+          }),
+          data: expect.objectContaining({
+            kind: 'order.customer_marked_paid',
+            orderId: 'order-1',
+            amountNaira: '1500',
+          }),
+        }),
+      );
+    });
+
+    it('order.payment_confirmed → push the customer with amount', () => {
+      subs.onPaymentConfirmed({
+        orderId: 'order-1',
+        customerId: 'cust-1',
+        amountNaira: 1500,
+      });
+
+      expect(fanout.send).toHaveBeenCalledWith(
+        'cust-1',
+        expect.objectContaining({
+          notification: expect.objectContaining({
+            title: 'Payment confirmed',
+            body: expect.stringMatching(/₦1,500/),
+          }),
+          data: expect.objectContaining({
+            kind: 'order.payment_confirmed',
+            orderId: 'order-1',
+          }),
+        }),
+      );
+    });
+  });
+
   describe('document.expiring_soon', () => {
     it('user ownerType → fan out to that user with daysRemaining in body', () => {
       subs.onExpiringSoon({
