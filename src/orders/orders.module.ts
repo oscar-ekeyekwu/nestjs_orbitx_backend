@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OrdersService } from './orders.service';
+import { OrdersStalePendingCron } from './orders.cron';
 import { OrdersController } from './orders.controller';
 import { OrderShareService } from './order-share.service';
 import { OrderShareController } from './order-share.controller';
@@ -42,7 +43,7 @@ import { VehiclesModule } from '../vehicles/vehicles.module';
     OrderShareController,
     AdminTransfersController,
   ],
-  providers: [OrdersService, OrderShareService],
+  providers: [OrdersService, OrderShareService, OrdersStalePendingCron],
   exports: [OrdersService],
 })
 export class OrdersModule {}
