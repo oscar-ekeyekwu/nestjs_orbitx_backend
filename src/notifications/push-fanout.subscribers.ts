@@ -257,8 +257,19 @@ export class PushFanoutEventSubscribers {
       .createQueryBuilder('dp')
       .innerJoin(Wallet, 'w', 'w."userId" = dp."userId"')
       .where('dp."isOnline" = true')
-      .andWhere('dp."verificationStatus" = :status', {
-        status: DriverVerificationStatus.ACTIVE,
+      // Widened — Phase 3 — to include APPROVED. The chained
+      // approved → active transition can fail (admin patches that
+      // skip the state machine, partial migrations) and the result
+      // is a driver who's online + funded but invisible to dispatch.
+      // The Live Drivers admin page already widened to match; this
+      // brings the push fanout in line so a "stuck approved" driver
+      // can still receive orders. Suspended/rejected/setup states
+      // stay excluded.
+      .andWhere('dp."verificationStatus" IN (:...statuses)', {
+        statuses: [
+          DriverVerificationStatus.APPROVED,
+          DriverVerificationStatus.ACTIVE,
+        ],
       })
       .andWhere('dp."isOnDelivery" = false')
       .andWhere('dp."currentLatitude" IS NOT NULL')
@@ -284,10 +295,20 @@ export class PushFanoutEventSubscribers {
     );
 
     if (nearby.length === 0) {
+      // Per-gate diagnostic — when 0 drivers match, the broad warning
+      // doesn't tell ops WHICH gate killed it. This second query
+      // counts how many drivers satisfy each gate independently, so
+      // a log read pinpoints the bottleneck in one line.
+      const breakdown = await this.diagnoseEligibilityFailure(
+        event.platformChargeNaira,
+      );
       this.logger.warn(
         `order.created ${event.orderId} packageSize=${event.packageSize} — no eligible drivers ` +
-          `(online+ACTIVE+!isOnDelivery, within ${radiusKm}km of pickup, balance >= ₦${event.platformChargeNaira}). ` +
+          `(online+(APPROVED|ACTIVE)+!isOnDelivery, within ${radiusKm}km of pickup, balance >= ₦${event.platformChargeNaira}). ` +
           `${candidates.length} matched the balance+status gate but none were within radius. ` +
+          `Driver pool breakdown — total=${breakdown.total} online=${breakdown.online} ` +
+          `approvedOrActive=${breakdown.approvedOrActive} notOnDelivery=${breakdown.notOnDelivery} ` +
+          `withGps=${breakdown.withGps} fundedFor₦${event.platformChargeNaira}=${breakdown.funded}. ` +
           `Check driver_profiles location/online state and DRIVER_CHARGE_* config.`,
       );
       return;
@@ -463,6 +484,72 @@ export class PushFanoutEventSubscribers {
       `Push fanout skipped for ownerType=${ownerType} ownerId=${ownerId} — vehicle/company resolution pending D2/D3/D4.`,
     );
     return null;
+  }
+
+  /**
+   * Per-gate driver-pool diagnostic. Called when the main
+   * eligibility query returns 0 rows so the warning log can name
+   * the bottleneck gate instead of leaving ops to guess.
+   *
+   * Each count is a single COUNT(*) query; they're not exhaustive
+   * (a driver could be "online but not active") but the relative
+   * numbers immediately reveal which condition is the obstacle:
+   *
+   *   total=10 online=10 approvedOrActive=2 → 8 drivers are
+   *     online but stuck pre-active. Approve them or unstick the
+   *     approved→active transition.
+   *
+   *   total=10 online=0  → all drivers are offline.
+   *
+   *   ...withGps=0  → drivers toggle online without sending GPS;
+   *     the mobile online-status call isn't including location.
+   */
+  private async diagnoseEligibilityFailure(charge: number): Promise<{
+    total: number;
+    online: number;
+    approvedOrActive: number;
+    notOnDelivery: number;
+    withGps: number;
+    funded: number;
+  }> {
+    const drivers = this.driverProfiles.createQueryBuilder('dp');
+    const totalCount = await drivers.getCount();
+    const onlineCount = await drivers
+      .clone()
+      .where('dp."isOnline" = true')
+      .getCount();
+    const approvedOrActiveCount = await drivers
+      .clone()
+      .where('dp."verificationStatus" IN (:...statuses)', {
+        statuses: [
+          DriverVerificationStatus.APPROVED,
+          DriverVerificationStatus.ACTIVE,
+        ],
+      })
+      .getCount();
+    const notOnDeliveryCount = await drivers
+      .clone()
+      .where('dp."isOnDelivery" = false')
+      .getCount();
+    const withGpsCount = await drivers
+      .clone()
+      .where('dp."currentLatitude" IS NOT NULL')
+      .andWhere('dp."currentLongitude" IS NOT NULL')
+      .getCount();
+    const fundedCount = await this.driverProfiles
+      .createQueryBuilder('dp')
+      .innerJoin(Wallet, 'w', 'w."userId" = dp."userId"')
+      .where('w."balance" >= :charge', { charge })
+      .getCount();
+
+    return {
+      total: totalCount,
+      online: onlineCount,
+      approvedOrActive: approvedOrActiveCount,
+      notOnDelivery: notOnDeliveryCount,
+      withGps: withGpsCount,
+      funded: fundedCount,
+    };
   }
 }
 

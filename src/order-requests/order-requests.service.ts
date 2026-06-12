@@ -683,7 +683,12 @@ export class OrderRequestsService {
     if (!profile) return [];
     if (
       !profile.isOnline ||
-      profile.verificationStatus !== 'active' ||
+      // Widened to match the push-fanout subscriber — admin patches
+      // and partial migrations can leave a driver stuck at 'approved'
+      // even though they're online and funded. Both states are
+      // eligible to act on requests.
+      (profile.verificationStatus !== 'active' &&
+        profile.verificationStatus !== 'approved') ||
       profile.isOnDelivery ||
       profile.currentLatitude == null ||
       profile.currentLongitude == null
