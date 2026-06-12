@@ -502,7 +502,11 @@ export class OrdersService {
 
     // Calculate distance, filter by configured radius, and hide orders the
     // driver can't afford (platformCharge null on pre-migration rows →
-    // treated as 0 so they stay visible for back-compat).
+    // treated as 0 so they stay visible for back-compat). Final order
+    // is FRESHEST-FIRST by creation time so drivers see the newest
+    // broadcast at the top — what the customer just submitted, not a
+    // 30-minute-old leftover. Distance is still surfaced per-row for
+    // the UI to display, but it doesn't drive the sort.
     return orders
       .filter((order) =>
         (order.platformCharge ?? NAIRA_ZERO).lessThanOrEqualTo(balance),
@@ -517,7 +521,10 @@ export class OrdersService {
         ),
       }))
       .filter((order) => order.distance <= deliveryRadiusKm)
-      .sort((a, b) => a.distance - b.distance);
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
   }
 
   async findOne(id: string): Promise<Order> {
