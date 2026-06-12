@@ -18,7 +18,7 @@ interface Candidate {
 function buildSubscriber(candidates: Candidate[], radiusKm = 50) {
   const send = jest.fn().mockResolvedValue(undefined);
   const andWhereCalls: Array<[string, unknown]> = [];
-  const qb = {
+  const qb: Record<string, jest.Mock> = {
     innerJoin: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn((clause: string, params?: unknown) => {
@@ -27,6 +27,13 @@ function buildSubscriber(candidates: Candidate[], radiusKm = 50) {
     }),
     select: jest.fn().mockReturnThis(),
     getRawMany: jest.fn().mockResolvedValue(candidates),
+    // Phase 3 — diagnoseEligibilityFailure() chains .clone()/.where()
+    // /.andWhere()/.getCount() off the same builder. The diagnostic
+    // only runs on the 0-eligible-drivers branch; the assertions in
+    // the spec target the main fanout query so we can return any
+    // count here without affecting any of them.
+    clone: jest.fn().mockReturnThis(),
+    getCount: jest.fn().mockResolvedValue(0),
   };
   const driverProfiles = { createQueryBuilder: jest.fn(() => qb) };
   const config = { getNumber: jest.fn().mockResolvedValue(radiusKm) };
