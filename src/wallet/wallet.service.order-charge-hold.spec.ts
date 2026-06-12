@@ -131,7 +131,7 @@ describe('WalletService.refundOrderCharge', () => {
 
     expect(txn).not.toBeNull();
     // The same row was mutated, no new transaction inserted.
-    expect((txn as Record<string, unknown>).status).toBe(
+    expect((txn as unknown as Record<string, unknown>).status).toBe(
       TransactionStatus.REVERSED,
     );
     // Balance never moved (the hold was PENDING).

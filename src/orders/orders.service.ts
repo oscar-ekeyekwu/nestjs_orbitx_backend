@@ -771,18 +771,15 @@ export class OrdersService {
       order.deliveredAt = new Date();
       order.finalPrice = order.estimatedPrice;
 
-      // Ledger-driven completion settlement. The platform-charge hold
-      // recorded at accept time (a PENDING DEBIT) is finalized here —
-      // its status flips to COMPLETED and the driver's wallet balance
-      // (cached, completed-only) finally decrements. If the order
-      // carried an insurance fee, that's written as an additional
-      // COMPLETED DEBIT in the same transaction. Idempotent so a
-      // retried delivery commit can't double-debit.
-      //
-      // For non-cash legacy orders (card / bank transfer) the
-      // customer's payment funded the driver's wallet — we still
-      // credit the driver via processOrderPayment so the platform
-      // doesn't end up owing them.
+      // The customer pays the driver DIRECTLY (cash in hand or
+      // bank transfer to the driver's account). The driver's wallet
+      // never receives the order payment — earnings live entirely
+      // off-platform. The wallet exists only for the platform's
+      // accounting: drivers fund it to take orders, and the per-
+      // order charge (+ insurance, if any) is debited here at
+      // completion. The driver's "earnings" view derives from
+      // delivered orders (finalPrice - platformCharge), independent
+      // of the wallet ledger.
       if (order.driverId) {
         await this.walletService
           .chargeOrderAtCompletion(
@@ -798,18 +795,6 @@ export class OrdersService {
               }`,
             );
           });
-
-        if (
-          order.paymentMethod &&
-          order.paymentMethod !== PaymentMethod.CASH
-        ) {
-          await this.walletService.processOrderPayment(
-            order.driverId,
-            order.id,
-            order.finalPrice,
-            order.paymentMethod,
-          );
-        }
       }
     }
 
