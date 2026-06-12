@@ -422,6 +422,99 @@ export class WalletService {
   }
 
   /**
+   * Record a cash-order completion in the ledger without changing the
+   * wallet balance. The driver collected and KEEPS the cash, so the
+   * platform's wallet balance shouldn't move — but the driver-facing
+   * earnings totals + per-order ledger rely on the Transaction table,
+   * which would otherwise be empty for cash orders.
+   *
+   * Writes a balanced pair: a CREDIT row for the driver's earnings
+   * (gross minus commission) and an offsetting DEBIT row for the
+   * "cash kept in hand" portion. Both rows share the orderId so
+   * they're easy to reconcile, and totalEarnings is bumped so the
+   * driver's lifetime tally is correct.
+   */
+  async recordCashOrderCompletion(
+    userId: string,
+    orderId: string,
+    amount: Naira | string | number,
+  ): Promise<{ credit: Transaction; offset: Transaction }> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const wallet = await queryRunner.manager.findOne(Wallet, {
+        where: { userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!wallet) {
+        throw new NotFoundException('Wallet not found');
+      }
+
+      const orderAmount = naira(String(amount));
+
+      const commissionPercentage = await this.configService.getNumber(
+        ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
+        20,
+      );
+      const commission = orderAmount
+        .times(commissionPercentage)
+        .dividedBy(100) as Naira;
+      const driverEarnings = orderAmount.minus(commission) as Naira;
+
+      // Balance stays exactly where it is — credit + debit must net
+      // to zero so the reconcile job doesn't flag this wallet.
+      const balanceAfter = wallet.balance;
+
+      wallet.totalEarnings = wallet.totalEarnings.plus(driverEarnings) as Naira;
+      await queryRunner.manager.save(wallet);
+
+      const credit = queryRunner.manager.create(Transaction, {
+        walletId: wallet.id,
+        orderId,
+        type: TransactionType.CREDIT,
+        amount: driverEarnings,
+        commission,
+        balanceAfter,
+        status: TransactionStatus.COMPLETED,
+        paymentMethod: PaymentMethod.CASH,
+        description: `Cash delivery earnings — order ${orderId}`,
+        metadata: {
+          orderAmount: orderAmount.toFixed(2),
+          commission: commission.toFixed(2),
+          commissionPercentage,
+          cashKept: true,
+        },
+      });
+      const savedCredit = await queryRunner.manager.save(credit);
+
+      const offset = queryRunner.manager.create(Transaction, {
+        walletId: wallet.id,
+        orderId,
+        type: TransactionType.DEBIT,
+        amount: driverEarnings,
+        commission: NAIRA_ZERO,
+        balanceAfter,
+        status: TransactionStatus.COMPLETED,
+        paymentMethod: PaymentMethod.CASH,
+        description: `Cash settlement (kept by driver) — order ${orderId}`,
+        metadata: { offsetsTransactionId: savedCredit.id, cashKept: true },
+      });
+      const savedOffset = await queryRunner.manager.save(offset);
+
+      await queryRunner.commitTransaction();
+      return { credit: savedCredit, offset: savedOffset };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
    * Get transaction history
    */
   async getTransactions(

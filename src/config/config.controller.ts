@@ -101,6 +101,16 @@ class UpdateDriverSettingsDto {
   @IsOptional()
   @IsNumber()
   driverChargeCap?: number;
+
+  /**
+   * Maximum number of uncompleted (accepted / picked_up / in_transit)
+   * orders a single driver can hold at once. 1 = single-active-order
+   * mode (the default and recommended setting); higher values let
+   * dispatch batch deliveries; 0 disables the cap entirely.
+   */
+  @IsOptional()
+  @IsNumber()
+  maxOrdersPerDriver?: number;
 }
 
 class UpdateMapsSettingsDto {
@@ -175,6 +185,7 @@ export class ConfigController {
       driverChargeFlat,
       driverChargePercentage,
       driverChargeCap,
+      maxOrdersPerDriver,
     ] = await Promise.all([
       this.configService.getNumber(ConfigKey.DRIVER_MIN_BALANCE, 5000),
       this.configService.getNumber(ConfigKey.ORDER_DELIVERY_RADIUS_KM, 50),
@@ -183,6 +194,7 @@ export class ConfigController {
       this.configService.getNumber(ConfigKey.DRIVER_CHARGE_FLAT, 200),
       this.configService.getNumber(ConfigKey.DRIVER_CHARGE_PERCENTAGE, 10),
       this.configService.getNumber(ConfigKey.DRIVER_CHARGE_CAP, 0),
+      this.configService.getNumber(ConfigKey.MAX_ORDERS_PER_DRIVER, 1),
     ]);
     return {
       driverMinBalance,
@@ -192,6 +204,7 @@ export class ConfigController {
       driverChargeFlat,
       driverChargePercentage,
       driverChargeCap,
+      maxOrdersPerDriver,
     };
   }
 
@@ -358,6 +371,21 @@ export class ConfigController {
         this.configService.update(ConfigKey.DRIVER_CHARGE_CAP, {
           key: ConfigKey.DRIVER_CHARGE_CAP,
           value: String(dto.driverChargeCap),
+          dataType: 'number',
+        }),
+      );
+    }
+
+    if (dto.maxOrdersPerDriver !== undefined) {
+      if (dto.maxOrdersPerDriver < 0 || !Number.isInteger(dto.maxOrdersPerDriver)) {
+        throw new BadRequestException(
+          'maxOrdersPerDriver must be a non-negative integer (0 to disable the cap).',
+        );
+      }
+      updates.push(
+        this.configService.update(ConfigKey.MAX_ORDERS_PER_DRIVER, {
+          key: ConfigKey.MAX_ORDERS_PER_DRIVER,
+          value: String(dto.maxOrdersPerDriver),
           dataType: 'number',
         }),
       );
