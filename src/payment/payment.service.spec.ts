@@ -129,6 +129,20 @@ describe('PaymentService (ARCH-13)', () => {
     txManager = {
       findOne: jest.fn(),
       save: jest.fn((e: unknown) => Promise.resolve(e)),
+      // PaymentService.settleSuccessfulCharge now computes
+      // balanceAfter via a ledger SUM through the active manager.
+      // Default to a 0-balance ledger; tests can override by spying
+      // on this builder if they need a non-zero starting balance.
+      createQueryBuilder: jest.fn(() => {
+        const builder: Record<string, unknown> = {};
+        Object.assign(builder, {
+          select: jest.fn(() => builder),
+          from: jest.fn(() => builder),
+          where: jest.fn(() => builder),
+          getRawOne: jest.fn().mockResolvedValue({ balance: '0' }),
+        });
+        return builder;
+      }),
     };
     dataSource = {
       transaction: jest.fn((cb: (m: EntityManager) => Promise<unknown>) =>
@@ -210,16 +224,31 @@ describe('PaymentService (ARCH-13)', () => {
   });
 
   describe('settleSuccessfulCharge', () => {
-    it('credits the wallet + flips the transaction to COMPLETED + emits payment.succeeded', async () => {
+    it('flips the transaction to COMPLETED with balanceAfter computed against the live ledger + emits payment.succeeded', async () => {
+      // Ledger-driven model: wallet.balance is derived from the
+      // transactions table via the wallet_balances view, so the
+      // service no longer mutates it. balanceAfter on the settling
+      // row = current ledger (mocked '100' below) + txn amount.
       const txn = buildTransaction({ status: TransactionStatus.PENDING });
       const wallet = buildWallet({ balance: naira('100') });
       txManager.findOne
         .mockResolvedValueOnce(txn)
         .mockResolvedValueOnce(wallet);
+      (
+        txManager.createQueryBuilder as jest.Mock
+      ).mockImplementationOnce(() => {
+        const builder: Record<string, unknown> = {};
+        Object.assign(builder, {
+          select: jest.fn(() => builder),
+          from: jest.fn(() => builder),
+          where: jest.fn(() => builder),
+          getRawOne: jest.fn().mockResolvedValue({ balance: '100' }),
+        });
+        return builder;
+      });
 
       await service.settleSuccessfulCharge('txn-1');
 
-      expect(wallet.balance.toString()).toBe('4600');
       expect(txn.status).toBe(TransactionStatus.COMPLETED);
       expect(txn.balanceAfter.toString()).toBe('4600');
       expect(events.emit).toHaveBeenCalledWith('payment.succeeded', {

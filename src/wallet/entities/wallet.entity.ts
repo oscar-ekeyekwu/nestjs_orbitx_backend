@@ -25,12 +25,12 @@ export class Wallet {
   @JoinColumn({ name: 'userId' })
   user: User;
 
-  @Column('decimal', {
-    precision: 12,
-    scale: 2,
-    default: 0,
-    transformer: nairaTransformer,
-  })
+  /**
+   * Hydrated at read time from the `wallet_balances` view (or a SUM
+   * over completed transactions when a row lock is held). NOT a
+   * persisted column — writes don't update it; the ledger does.
+   * See `WalletService.getBalance` / `getWalletByUserId`.
+   */
   balance: Naira;
 
   @Column('decimal', {
