@@ -219,6 +219,34 @@ export class OrderRequestsService {
       60,
     );
 
+    // MAX_ORDERS_PER_DRIVER cap (admin-tunable; default 1). Read the
+    // driver's current active-order count BEFORE the txn so the
+    // friendly error fires without holding the request row open.
+    // A small race window is acceptable: the partial unique index on
+    // dispatch_offers (one PENDING offer per driver) backstops the
+    // remaining gap, and the legacy acceptOrder path enforces the
+    // same cap with its own pessimistic lock.
+    const cap = await this.configService.getNumber(
+      ConfigKey.MAX_ORDERS_PER_DRIVER,
+      1,
+    );
+    if (Number.isFinite(cap) && cap > 0) {
+      const activeCount = await this.ordersRepo.count({
+        where: [
+          { driverId, status: OrderStatus.ACCEPTED },
+          { driverId, status: OrderStatus.PICKED_UP },
+          { driverId, status: OrderStatus.IN_TRANSIT },
+        ],
+      });
+      if (activeCount >= cap) {
+        throw new BadRequestException(
+          cap === 1
+            ? 'You already have an active delivery. Complete it before submitting another offer.'
+            : `You're already at the maximum of ${cap} active deliveries.`,
+        );
+      }
+    }
+
     const txnResult = await this.dataSource.transaction(async (manager) => {
       // Pessimistic lock on the request so two concurrent quote_accept
       // submissions can't both win.
