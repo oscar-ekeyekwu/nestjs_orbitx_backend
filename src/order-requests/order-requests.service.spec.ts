@@ -129,7 +129,9 @@ function buildService(state: State): {
     })),
   } as unknown as Repository<DispatchOffer>;
 
-  const ordersRepo = {} as Repository<Order>;
+  const ordersRepo = {
+    count: jest.fn().mockResolvedValue(0),
+  } as unknown as Repository<Order>;
 
   const walletService = {
     canDriverCoverCharge: jest.fn().mockResolvedValue(true),

@@ -248,6 +248,15 @@ export class PushFanoutEventSubscribers {
       ConfigKey.ORDER_DELIVERY_RADIUS_KM,
       50,
     );
+    // MAX_ORDERS_PER_DRIVER (admin-tunable; default 1) — when set,
+    // a driver already at the cap shouldn't get pinged with new
+    // work. Counted live off the orders table so a stuck
+    // isOnDelivery flag can't keep a freed driver out of the pool
+    // and a missing flag can't sneak an at-cap driver in.
+    const cap = await this.config.getNumber(
+      ConfigKey.MAX_ORDERS_PER_DRIVER,
+      1,
+    );
 
     const candidates: Array<{
       userId: string;
@@ -277,6 +286,19 @@ export class PushFanoutEventSubscribers {
       .andWhere('w."balance" >= :charge', {
         charge: event.platformChargeNaira,
       })
+      // MAX_ORDERS_PER_DRIVER — exclude drivers whose live active-order
+      // count is already at the cap. The subquery is grouped so it
+      // counts per-driver. cap <= 0 disables this gate entirely.
+      .andWhere(
+        Number.isFinite(cap) && cap > 0
+          ? `(
+              SELECT COUNT(*) FROM "orders" o
+              WHERE o."driverId" = dp."userId"
+                AND o."status" IN ('accepted', 'picked_up', 'in_transit')
+            ) < :activeOrderCap`
+          : '1 = 1',
+        { activeOrderCap: cap },
+      )
       .select([
         'dp."userId" AS "userId"',
         'dp."currentLatitude" AS "currentLatitude"',

@@ -594,6 +594,13 @@ export class OrdersService {
       );
     }
 
+    // MAX_ORDERS_PER_DRIVER (admin-tunable; default 1) — count the
+    // driver's currently-uncompleted assignments and refuse a new
+    // acceptance once they're at the cap. isOnDelivery is a cached
+    // flag that can drift if a completion failed mid-write, so the
+    // source of truth here is the orders table itself.
+    await this.assertDriverUnderActiveOrderCap(driverId);
+
     // F2 — lock-mode gate. If VEHICLE_EDIT_GRACE_MODE=lock and the
     // driver's active vehicle has a pending regulatory edit awaiting
     // admin review, refuse acceptance with VEHICLE_002. continue mode
@@ -769,16 +776,37 @@ export class OrdersService {
       // already held from the wallet on acceptance — nothing to credit or
       // refund here, so the charge is simply finalized (kept).
       //
+      // We still write a balanced credit/debit pair into the ledger so
+      // the driver-facing earnings tally + per-order transaction list
+      // aren't permanently empty for cash orders. The pair nets to
+      // zero, so wallet.balance and reconcile remain undisturbed.
+      //
       // Legacy non-cash orders (card / bank transfer): the platform holds
       // the customer's money, so credit the driver their earnings net of
       // commission as before. The accept-time charge hold still applies.
-      if (order.driverId && order.paymentMethod !== PaymentMethod.CASH) {
-        await this.walletService.processOrderPayment(
-          order.driverId,
-          order.id,
-          order.finalPrice,
-          order.paymentMethod,
-        );
+      if (order.driverId) {
+        if (order.paymentMethod === PaymentMethod.CASH) {
+          await this.walletService
+            .recordCashOrderCompletion(
+              order.driverId,
+              order.id,
+              order.finalPrice,
+            )
+            .catch((err) => {
+              this.logger.error(
+                `recordCashOrderCompletion failed for ${order.id}: ${
+                  (err as Error).message
+                }`,
+              );
+            });
+        } else if (order.paymentMethod) {
+          await this.walletService.processOrderPayment(
+            order.driverId,
+            order.id,
+            order.finalPrice,
+            order.paymentMethod,
+          );
+        }
       }
     }
 
@@ -1426,6 +1454,36 @@ export class OrdersService {
    * not statically import (avoiding another cycle). Using ModuleRef
    * keeps the wiring contained to this single helper.
    */
+  /**
+   * Reject the acceptance when the driver is already at the MAX_ORDERS_PER_DRIVER
+   * cap. Counts uncompleted assignments (accepted/picked_up/in_transit) directly
+   * from the orders table so a stale isOnDelivery flag can't mask a real second
+   * active order. When the admin has set the cap > 1 to allow batched delivery,
+   * this check still enforces THAT ceiling.
+   */
+  private async assertDriverUnderActiveOrderCap(driverId: string): Promise<void> {
+    const cap = await this.configService.getNumber(
+      ConfigKey.MAX_ORDERS_PER_DRIVER,
+      1,
+    );
+    if (!Number.isFinite(cap) || cap <= 0) return; // 0/invalid → uncapped
+
+    const activeCount = await this.ordersRepository.count({
+      where: [
+        { driverId, status: OrderStatus.ACCEPTED },
+        { driverId, status: OrderStatus.PICKED_UP },
+        { driverId, status: OrderStatus.IN_TRANSIT },
+      ],
+    });
+    if (activeCount >= cap) {
+      throw new BadRequestException(
+        cap === 1
+          ? 'You already have an active delivery. Complete it before accepting another order.'
+          : `You're already at the maximum of ${cap} active deliveries. Complete one before accepting another order.`,
+      );
+    }
+  }
+
   private async assertNoVehicleEditLock(driverId: string): Promise<void> {
     if (!this.moduleRef) return;
 
