@@ -74,7 +74,12 @@ describe('PayoutsService (G4)', () => {
   let walletsRepo: { createQueryBuilder: jest.Mock };
   let usersRepo: { findOne: jest.Mock };
   let dataSource: { transaction: jest.Mock };
-  let manager: { findOne: jest.Mock; save: jest.Mock; insert: jest.Mock };
+  let manager: {
+    findOne: jest.Mock;
+    save: jest.Mock;
+    insert: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
   let config: { getNumber: jest.Mock };
   let gateway: jest.Mocked<IPaymentGateway>;
   let registry: {

@@ -80,7 +80,11 @@ describe('PaymentService (ARCH-13)', () => {
   };
   let ordersRepo: { findOne: jest.Mock };
   let walletRepo: { findOne: jest.Mock };
-  let txManager: { findOne: jest.Mock; save: jest.Mock };
+  let txManager: {
+    findOne: jest.Mock;
+    save: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
   let dataSource: {
     transaction: jest.Mock;
     getRepository: jest.Mock;
