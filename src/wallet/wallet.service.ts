@@ -422,99 +422,6 @@ export class WalletService {
   }
 
   /**
-   * Record a cash-order completion in the ledger without changing the
-   * wallet balance. The driver collected and KEEPS the cash, so the
-   * platform's wallet balance shouldn't move — but the driver-facing
-   * earnings totals + per-order ledger rely on the Transaction table,
-   * which would otherwise be empty for cash orders.
-   *
-   * Writes a balanced pair: a CREDIT row for the driver's earnings
-   * (gross minus commission) and an offsetting DEBIT row for the
-   * "cash kept in hand" portion. Both rows share the orderId so
-   * they're easy to reconcile, and totalEarnings is bumped so the
-   * driver's lifetime tally is correct.
-   */
-  async recordCashOrderCompletion(
-    userId: string,
-    orderId: string,
-    amount: Naira | string | number,
-  ): Promise<{ credit: Transaction; offset: Transaction }> {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      const wallet = await queryRunner.manager.findOne(Wallet, {
-        where: { userId },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      if (!wallet) {
-        throw new NotFoundException('Wallet not found');
-      }
-
-      const orderAmount = naira(String(amount));
-
-      const commissionPercentage = await this.configService.getNumber(
-        ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
-        20,
-      );
-      const commission = orderAmount
-        .times(commissionPercentage)
-        .dividedBy(100) as Naira;
-      const driverEarnings = orderAmount.minus(commission) as Naira;
-
-      // Balance stays exactly where it is — credit + debit must net
-      // to zero so the reconcile job doesn't flag this wallet.
-      const balanceAfter = wallet.balance;
-
-      wallet.totalEarnings = wallet.totalEarnings.plus(driverEarnings) as Naira;
-      await queryRunner.manager.save(wallet);
-
-      const credit = queryRunner.manager.create(Transaction, {
-        walletId: wallet.id,
-        orderId,
-        type: TransactionType.CREDIT,
-        amount: driverEarnings,
-        commission,
-        balanceAfter,
-        status: TransactionStatus.COMPLETED,
-        paymentMethod: PaymentMethod.CASH,
-        description: `Cash delivery earnings — order ${orderId}`,
-        metadata: {
-          orderAmount: orderAmount.toFixed(2),
-          commission: commission.toFixed(2),
-          commissionPercentage,
-          cashKept: true,
-        },
-      });
-      const savedCredit = await queryRunner.manager.save(credit);
-
-      const offset = queryRunner.manager.create(Transaction, {
-        walletId: wallet.id,
-        orderId,
-        type: TransactionType.DEBIT,
-        amount: driverEarnings,
-        commission: NAIRA_ZERO,
-        balanceAfter,
-        status: TransactionStatus.COMPLETED,
-        paymentMethod: PaymentMethod.CASH,
-        description: `Cash settlement (kept by driver) — order ${orderId}`,
-        metadata: { offsetsTransactionId: savedCredit.id, cashKept: true },
-      });
-      const savedOffset = await queryRunner.manager.save(offset);
-
-      await queryRunner.commitTransaction();
-      return { credit: savedCredit, offset: savedOffset };
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      throw error;
-    } finally {
-      await queryRunner.release();
-    }
-  }
-
-  /**
    * Get transaction history
    */
   async getTransactions(
@@ -588,6 +495,24 @@ export class WalletService {
    *
    * Returns the inserted DEBIT transaction, or null when amount <= 0.
    */
+  /**
+   * Reserve a driver's wallet balance to cover an order's platform
+   * charge at accept time. Writes a single DEBIT row with status
+   * PENDING — the wallet.balance (cached) is NOT decremented because
+   * `wallet.balance` and the driver-facing display reflect ONLY
+   * completed transactions. The PENDING row sits in the ledger
+   * until the order resolves:
+   *
+   *   - delivered → flipped to COMPLETED by `chargeOrderAtCompletion`,
+   *     at which point wallet.balance is finally decremented.
+   *   - cancelled → flipped to REVERSED by `reverseOrderCharge`;
+   *     wallet.balance never moves.
+   *
+   * Eligibility (`canDriverCoverCharge`) still checks wallet.balance,
+   * so a driver whose completed-balance can't cover the charge is
+   * refused. Multiple pending holds + a single-active-order cap
+   * together prevent overcommit.
+   */
   async holdOrderCharge(
     userId: string,
     orderId: string,
@@ -621,27 +546,22 @@ export class WalletService {
         );
       }
 
-      const newBalance = wallet.balance.minus(amount) as Naira;
-      wallet.balance = newBalance;
-
-      await queryRunner.manager.save(wallet);
-
+      // No balance mutation — the PENDING row encodes the obligation
+      // without touching the displayed (completed-only) balance.
       const transaction = queryRunner.manager.create(Transaction, {
         walletId: wallet.id,
         orderId,
         type: TransactionType.DEBIT,
         amount,
-        balanceAfter: newBalance,
-        status: TransactionStatus.COMPLETED,
+        balanceAfter: wallet.balance,
+        status: TransactionStatus.PENDING,
         paymentMethod: PaymentMethod.WALLET,
         description: `Order charge hold for order ${orderId}`,
         metadata: { type: 'order_charge_hold', orderId },
       });
 
       const savedTransaction = await queryRunner.manager.save(transaction);
-
       await queryRunner.commitTransaction();
-
       return savedTransaction;
     } catch (error) {
       await queryRunner.rollbackTransaction();
@@ -660,6 +580,19 @@ export class WalletService {
    *     exists for this order (guards a retried/replayed cancel).
    *
    * Returns the inserted CREDIT transaction, or null when nothing was done.
+   */
+  /**
+   * Reverse a pending platform-charge hold when an accepted order is
+   * cancelled. Finds the PENDING hold for this orderId and flips its
+   * status to REVERSED. wallet.balance never moved (the hold was
+   * PENDING) so no balance update is needed.
+   *
+   *   - amount <= 0 → no-op.
+   *   - no matching pending hold → no-op (treat as already-reversed).
+   *   - idempotent: re-running on an already-REVERSED row is a noop.
+   *
+   * Returns the reversed transaction, or null when nothing applicable
+   * was found.
    */
   async refundOrderCharge(
     userId: string,
@@ -684,42 +617,152 @@ export class WalletService {
         throw new NotFoundException('Wallet not found');
       }
 
-      // Idempotency guard: don't double-refund the same order.
-      const existingRefund = await queryRunner.manager
+      const hold = await queryRunner.manager
         .createQueryBuilder(Transaction, 'txn')
         .where('txn.walletId = :walletId', { walletId: wallet.id })
         .andWhere('txn.orderId = :orderId', { orderId })
         .andWhere("txn.metadata->>'type' = :type", {
-          type: 'order_charge_refund',
+          type: 'order_charge_hold',
         })
         .getOne();
-      if (existingRefund) {
+      if (!hold) {
         await queryRunner.commitTransaction();
-        return existingRefund;
+        return null;
+      }
+      if (hold.status === TransactionStatus.REVERSED) {
+        await queryRunner.commitTransaction();
+        return hold;
       }
 
-      const newBalance = wallet.balance.plus(amount) as Naira;
-      wallet.balance = newBalance;
-
-      await queryRunner.manager.save(wallet);
-
-      const transaction = queryRunner.manager.create(Transaction, {
-        walletId: wallet.id,
-        orderId,
-        type: TransactionType.CREDIT,
-        amount,
-        balanceAfter: newBalance,
-        status: TransactionStatus.COMPLETED,
-        paymentMethod: PaymentMethod.WALLET,
-        description: `Order charge refund for order ${orderId}`,
-        metadata: { type: 'order_charge_refund', orderId },
-      });
-
-      const savedTransaction = await queryRunner.manager.save(transaction);
+      hold.status = TransactionStatus.REVERSED;
+      hold.description = `Order charge hold reversed (order ${orderId} cancelled)`;
+      const saved = await queryRunner.manager.save(hold);
 
       await queryRunner.commitTransaction();
+      return saved;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
 
-      return savedTransaction;
+  /**
+   * Finalize a delivered order's wallet impact. Flips the matching
+   * PENDING platform-charge hold to COMPLETED (decrementing
+   * wallet.balance for the first time), and — if the order carried
+   * an insurance fee — writes an additional COMPLETED DEBIT for
+   * insurance. After this commit, the driver-facing balance display
+   * reflects the deduction for this order.
+   *
+   * Idempotent: if the hold is already COMPLETED (or there's already
+   * a completion-insurance row) the call is a no-op.
+   */
+  async chargeOrderAtCompletion(
+    userId: string,
+    orderId: string,
+    platformCharge: Naira,
+    insuranceFee: Naira,
+  ): Promise<Transaction | null> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const wallet = await queryRunner.manager.findOne(Wallet, {
+        where: { userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!wallet) {
+        throw new NotFoundException('Wallet not found');
+      }
+
+      let firstSaved: Transaction | null = null;
+
+      if (platformCharge.greaterThan(NAIRA_ZERO)) {
+        const hold = await queryRunner.manager
+          .createQueryBuilder(Transaction, 'txn')
+          .where('txn.walletId = :walletId', { walletId: wallet.id })
+          .andWhere('txn.orderId = :orderId', { orderId })
+          .andWhere("txn.metadata->>'type' = :type", {
+            type: 'order_charge_hold',
+          })
+          .getOne();
+
+        if (hold && hold.status === TransactionStatus.PENDING) {
+          // The accept-time hold matures into a real deduction.
+          const newBalance = wallet.balance.minus(hold.amount) as Naira;
+          wallet.balance = newBalance;
+          hold.status = TransactionStatus.COMPLETED;
+          hold.balanceAfter = newBalance;
+          hold.description = `Order completion charge for order ${orderId}`;
+          firstSaved = await queryRunner.manager.save(hold);
+        } else if (!hold) {
+          // Legacy / cash flow that never wrote a hold — write a
+          // COMPLETED row inline so the ledger still reflects the
+          // platform's revenue and balance moves consistently.
+          const existsCompletion = await queryRunner.manager
+            .createQueryBuilder(Transaction, 'txn')
+            .where('txn.walletId = :walletId', { walletId: wallet.id })
+            .andWhere('txn.orderId = :orderId', { orderId })
+            .andWhere("txn.metadata->>'type' = :type", {
+              type: 'order_completion_charge',
+            })
+            .getOne();
+          if (!existsCompletion) {
+            const newBalance = wallet.balance.minus(platformCharge) as Naira;
+            wallet.balance = newBalance;
+            const inline = queryRunner.manager.create(Transaction, {
+              walletId: wallet.id,
+              orderId,
+              type: TransactionType.DEBIT,
+              amount: platformCharge,
+              balanceAfter: newBalance,
+              status: TransactionStatus.COMPLETED,
+              paymentMethod: PaymentMethod.WALLET,
+              description: `Order completion charge for order ${orderId}`,
+              metadata: { type: 'order_completion_charge', orderId },
+            });
+            firstSaved = await queryRunner.manager.save(inline);
+          } else {
+            firstSaved = existsCompletion;
+          }
+        } else {
+          firstSaved = hold;
+        }
+      }
+
+      if (insuranceFee.greaterThan(NAIRA_ZERO)) {
+        const existsInsurance = await queryRunner.manager
+          .createQueryBuilder(Transaction, 'txn')
+          .where('txn.walletId = :walletId', { walletId: wallet.id })
+          .andWhere('txn.orderId = :orderId', { orderId })
+          .andWhere("txn.metadata->>'type' = :type", {
+            type: 'order_insurance_fee',
+          })
+          .getOne();
+        if (!existsInsurance) {
+          const newBalance = wallet.balance.minus(insuranceFee) as Naira;
+          wallet.balance = newBalance;
+          const insuranceRow = queryRunner.manager.create(Transaction, {
+            walletId: wallet.id,
+            orderId,
+            type: TransactionType.DEBIT,
+            amount: insuranceFee,
+            balanceAfter: newBalance,
+            status: TransactionStatus.COMPLETED,
+            paymentMethod: PaymentMethod.WALLET,
+            description: `Order insurance fee for order ${orderId}`,
+            metadata: { type: 'order_insurance_fee', orderId },
+          });
+          firstSaved = (await queryRunner.manager.save(insuranceRow)) ?? firstSaved;
+        }
+      }
+
+      await queryRunner.manager.save(wallet);
+      await queryRunner.commitTransaction();
+      return firstSaved;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;
@@ -730,6 +773,12 @@ export class WalletService {
 
   /**
    * Get wallet statistics
+   *
+   * `totalEarnings` is the sum of (finalPrice - platformCharge) over
+   * the driver's delivered orders — i.e. what the driver actually
+   * pocketed after the platform's per-order cut. This is computed
+   * fresh from the orders table (not from a cached counter) so it
+   * stays in sync with completion-time charge changes.
    */
   async getWalletStats(userId: string): Promise<{
     balance: string;
@@ -749,9 +798,32 @@ export class WalletService {
       where: { walletId: wallet.id },
     });
 
+    // Earnings = sum(finalPrice − platformCharge) over delivered
+    // orders this driver completed. NULLs (legacy rows) treated as 0.
+    let earningsTotal: Naira = NAIRA_ZERO;
+    try {
+      const row = await this.dataSource
+        .createQueryBuilder()
+        .select(
+          'COALESCE(SUM(COALESCE(o."finalPrice", 0) - COALESCE(o."platformCharge", 0)), 0)',
+          'total',
+        )
+        .from('orders', 'o')
+        .where('o."driverId" = :userId', { userId })
+        .andWhere('o."status" = :status', { status: 'delivered' })
+        .getRawOne<{ total: string }>();
+      if (row?.total != null) {
+        earningsTotal = naira(String(row.total)) as Naira;
+      }
+    } catch (err) {
+      this.logger.warn(
+        `earnings sum failed for ${userId}: ${(err as Error).message}`,
+      );
+    }
+
     return {
       balance: nairaToJSON(wallet.balance) ?? '0.00',
-      totalEarnings: nairaToJSON(wallet.totalEarnings) ?? '0.00',
+      totalEarnings: nairaToJSON(earningsTotal) ?? '0.00',
       totalWithdrawals: nairaToJSON(wallet.totalWithdrawals) ?? '0.00',
       pendingBalance: nairaToJSON(wallet.pendingBalance) ?? '0.00',
       totalTransactions,
