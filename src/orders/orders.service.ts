@@ -465,12 +465,27 @@ export class OrdersService {
     const wallet = await this.walletService.getWalletByUserId(driverId);
     const balance = wallet.balance;
 
+    // Age filter — stale pending orders are ignored. Without this
+    // every test order ever created sticks in the available list
+    // forever (no cron consumes ORDER_AUTO_CANCEL_MINUTES). We
+    // ALSO use the same window here as a cheap UI-level filter so
+    // the driver doesn't see a year-old test in the list. Default
+    // 60 minutes; admin tunable.
+    const autoCancelMinutes = await this.configService.getNumber(
+      ConfigKey.ORDER_AUTO_CANCEL_MINUTES,
+      60,
+    );
+    const ageCutoff =
+      autoCancelMinutes > 0
+        ? new Date(Date.now() - autoCancelMinutes * 60_000)
+        : null;
+
     // G3 — exclude orders whose payment is still being arranged
     // off-platform (pending_transfer for manual bank transfer, plain
     // pending for Paystack pre-webhook). Cash orders pass through —
     // the driver collects in person. Reconciled orders (paymentStatus
     // = pending_cash | completed) become broadcast-eligible.
-    const orders = await this.ordersRepository
+    const qb = this.ordersRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.customer', 'customer')
       .where('order.status = :status', { status: OrderStatus.PENDING })
@@ -479,13 +494,19 @@ export class OrdersService {
           OrderPaymentStatus.PENDING,
           OrderPaymentStatus.PENDING_TRANSFER,
         ],
-      })
-      .orderBy('order.createdAt', 'ASC')
-      .getMany();
+      });
+    if (ageCutoff) {
+      qb.andWhere('order."createdAt" >= :ageCutoff', { ageCutoff });
+    }
+    const orders = await qb.orderBy('order.createdAt', 'ASC').getMany();
 
     // Calculate distance, filter by configured radius, and hide orders the
     // driver can't afford (platformCharge null on pre-migration rows →
-    // treated as 0 so they stay visible for back-compat).
+    // treated as 0 so they stay visible for back-compat). Final order
+    // is FRESHEST-FIRST by creation time so drivers see the newest
+    // broadcast at the top — what the customer just submitted, not a
+    // 30-minute-old leftover. Distance is still surfaced per-row for
+    // the UI to display, but it doesn't drive the sort.
     return orders
       .filter((order) =>
         (order.platformCharge ?? NAIRA_ZERO).lessThanOrEqualTo(balance),
@@ -500,7 +521,10 @@ export class OrdersService {
         ),
       }))
       .filter((order) => order.distance <= deliveryRadiusKm)
-      .sort((a, b) => a.distance - b.distance);
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
   }
 
   async findOne(id: string): Promise<Order> {
