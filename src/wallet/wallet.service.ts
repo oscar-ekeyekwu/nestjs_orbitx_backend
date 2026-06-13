@@ -389,18 +389,27 @@ export class WalletService {
   }
 
   /**
-   * Get transaction history
+   * Get transaction history.
+   *
+   * By default returns only COMPLETED rows — the only rows that
+   * actually moved the wallet balance. PENDING holds and REVERSED
+   * (cancelled) rows are excluded so the user's wallet list maps
+   * 1:1 with the visible balance. `includeAll: true` lifts the
+   * filter for admin / audit callers that need the full ledger.
    */
   async getTransactions(
     userId: string,
     limit: number = 50,
     offset: number = 0,
+    options: { includeAll?: boolean } = {},
   ): Promise<{ transactions: Transaction[]; total: number }> {
     const wallet = await this.getWalletByUserId(userId);
 
     const [transactions, total] = await this.transactionRepository.findAndCount(
       {
-        where: { walletId: wallet.id },
+        where: options.includeAll
+          ? { walletId: wallet.id }
+          : { walletId: wallet.id, status: TransactionStatus.COMPLETED },
         order: { createdAt: 'DESC' },
         take: limit,
         skip: offset,
