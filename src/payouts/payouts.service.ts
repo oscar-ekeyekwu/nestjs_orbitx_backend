@@ -80,13 +80,24 @@ export class PayoutsService {
     const wallets = await this.walletsRepo
       .createQueryBuilder('wallet')
       .innerJoinAndSelect('wallet.user', 'user')
+      .innerJoin(
+        '"wallet_balances"',
+        'wb',
+        'wb."wallet_id" = wallet."id"',
+      )
+      .addSelect('wb."balance"', 'wb_balance')
       .where('user.role = :role', { role: UserRole.DRIVER })
       .andWhere('user.isActive = :active', { active: true })
-      .andWhere('CAST(wallet.balance AS numeric) >= :threshold', { threshold })
-      .getMany();
+      .andWhere('wb."balance" >= :threshold', { threshold })
+      .getRawAndEntities();
 
     const created: Payout[] = [];
-    for (const wallet of wallets) {
+    for (let i = 0; i < wallets.entities.length; i++) {
+      const wallet = wallets.entities[i];
+      const raw = wallets.raw[i] as { wb_balance: string | null };
+      // Hydrate the runtime-only balance field with the value the
+      // view returned so save() / amount: wallet.balance works.
+      wallet.balance = naira(String(raw?.wb_balance ?? '0')) as Naira;
       try {
         const row = await this.payoutsRepo.save(
           this.payoutsRepo.create({
@@ -207,13 +218,13 @@ export class PayoutsService {
       if (!wallet) {
         throw new NotFoundException('Wallet not found.');
       }
-      if (wallet.balance.lt(payout.amount)) {
+      const balanceBefore = await this.ledgerBalance(wallet.id, manager);
+      if (balanceBefore.lt(payout.amount)) {
         throw new BadRequestException(
           'Wallet balance is below the payout amount; refusing to overdraft.',
         );
       }
-
-      wallet.balance = wallet.balance.minus(payout.amount) as Naira;
+      const balanceAfter = balanceBefore.minus(payout.amount) as Naira;
       wallet.totalWithdrawals = (wallet.totalWithdrawals ?? NAIRA_ZERO).plus(
         payout.amount,
       ) as Naira;
@@ -224,7 +235,7 @@ export class PayoutsService {
         type: TransactionType.DEBIT,
         amount: payout.amount,
         commission: NAIRA_ZERO,
-        balanceAfter: wallet.balance,
+        balanceAfter,
         status: TransactionStatus.COMPLETED,
         paymentMethod: PaymentMethod.BANK_TRANSFER,
         reference: input.receiptReference,
@@ -300,7 +311,8 @@ export class PayoutsService {
       if (!wallet) {
         throw new NotFoundException('Wallet not found for payout settlement.');
       }
-      wallet.balance = wallet.balance.minus(payout.amount) as Naira;
+      const balanceBeforeAuto = await this.ledgerBalance(wallet.id, manager);
+      const balanceAfterAuto = balanceBeforeAuto.minus(payout.amount) as Naira;
       wallet.totalWithdrawals = (wallet.totalWithdrawals ?? NAIRA_ZERO).plus(
         payout.amount,
       ) as Naira;
@@ -311,7 +323,7 @@ export class PayoutsService {
         type: TransactionType.DEBIT,
         amount: payout.amount,
         commission: NAIRA_ZERO,
-        balanceAfter: wallet.balance,
+        balanceAfter: balanceAfterAuto,
         status: TransactionStatus.COMPLETED,
         // Paystack transfers are bank-transfer-by-another-name; this
         // keeps PaymentMethod stable without inventing a new enum value.
@@ -331,6 +343,31 @@ export class PayoutsService {
       payoutId,
       method: 'auto',
     });
+  }
+
+  /**
+   * Per-wallet ledger sum (COMPLETED rows only). Mirrors the
+   * canonical `wallet_balances` view but runs inside the caller's
+   * transaction manager so the read is consistent with the row
+   * lock that the surrounding settlement holds.
+   */
+  private async ledgerBalance(
+    walletId: string,
+    manager: import('typeorm').EntityManager,
+  ): Promise<Naira> {
+    const row = await manager
+      .createQueryBuilder()
+      .select(
+        `COALESCE(SUM(CASE
+           WHEN t."type" = 'credit' AND t."status" = 'completed' THEN t."amount"
+           WHEN t."type" = 'debit'  AND t."status" = 'completed' THEN -t."amount"
+           ELSE 0 END), 0)`,
+        'balance',
+      )
+      .from('transactions', 't')
+      .where('t."walletId" = :walletId', { walletId })
+      .getRawOne<{ balance: string }>();
+    return naira(String(row?.balance ?? 0)) as Naira;
   }
 
   private async markFailed(id: string, reason: string): Promise<void> {

@@ -26,8 +26,35 @@ interface MockWallet {
 function buildService(opts: {
   wallet: MockWallet | null;
   existingHold?: Record<string, unknown> | null;
+  /** Optional override for the simulated ledger balance returned by
+   *  the ledger-sum query. Defaults to `wallet.balance` so existing
+   *  tests pass unchanged. */
+  ledgerBalance?: string;
 }) {
   const saved: Array<Record<string, unknown>> = [];
+  // Two distinct createQueryBuilder shapes: the entity-aware one (for
+  // findOne hold lookups) and the raw-select one (for the ledger
+  // SUM). The mock returns whichever the caller is about to drive.
+  const makeBuilder = () => {
+    const builder: Record<string, unknown> = {};
+    Object.assign(builder, {
+      select: jest.fn(() => builder),
+      addSelect: jest.fn(() => builder),
+      from: jest.fn(() => builder),
+      where: jest.fn(() => builder),
+      andWhere: jest.fn(() => builder),
+      groupBy: jest.fn(() => builder),
+      setParameters: jest.fn(() => builder),
+      getRawOne: jest
+        .fn()
+        .mockResolvedValue({
+          balance: opts.ledgerBalance ?? opts.wallet?.balance?.toString() ?? '0',
+        }),
+      getRawMany: jest.fn().mockResolvedValue([]),
+      getOne: jest.fn().mockResolvedValue(opts.existingHold ?? null),
+    });
+    return builder;
+  };
   const manager = {
     findOne: jest.fn().mockResolvedValue(opts.wallet),
     create: jest.fn((_entity: unknown, data: Record<string, unknown>) => data),
@@ -35,11 +62,7 @@ function buildService(opts: {
       saved.push(entity);
       return Promise.resolve(entity);
     }),
-    createQueryBuilder: jest.fn(() => ({
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      getOne: jest.fn().mockResolvedValue(opts.existingHold ?? null),
-    })),
+    createQueryBuilder: jest.fn(() => makeBuilder()),
   };
   const queryRunner = {
     connect: jest.fn().mockResolvedValue(undefined),
@@ -51,6 +74,7 @@ function buildService(opts: {
   };
   const dataSource = {
     createQueryRunner: jest.fn(() => queryRunner),
+    manager,
   };
   const service = new WalletService(
     {} as never,
