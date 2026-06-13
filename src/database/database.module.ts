@@ -15,8 +15,15 @@ import * as path from 'path';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        console.log(config);
         const isProd = config.get('NODE_ENV') === 'production';
+        // TypeORM's per-query dump (logging: true / !isProd) drowns
+        // out app logs and makes real errors hard to find. Default
+        // to schema events + slow / failed queries only, which is
+        // what you actually want to see day-to-day. Set
+        // DB_LOGGING=verbose in the environment when you need the
+        // raw query stream back for a debugging session.
+        const dbLogging = config.get<string>('DB_LOGGING');
+        const verbose = dbLogging === 'verbose' || dbLogging === 'all';
         return {
           type: 'postgres',
           host: config.get<string>('DB_HOST'),
@@ -30,7 +37,11 @@ import * as path from 'path';
             path.join(__dirname, '/../database/migrations/*.{ts,js}'),
           ],
           migrationsRun: false, // auto-run migrations on startup
-          logging: !isProd,
+          logging: verbose ? 'all' : ['error', 'warn', 'schema', 'migration'],
+          // Surface any query taking longer than 500ms as a warning
+          // so genuinely slow queries still stand out without the
+          // every-query noise.
+          maxQueryExecutionTime: 500,
           ssl: isProd ? { rejectUnauthorized: false } : false,
         } as DataSourceOptions;
       },
