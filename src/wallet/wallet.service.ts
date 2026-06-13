@@ -180,7 +180,49 @@ export class WalletService {
   }
 
   /**
-   * Get wallet by user ID
+   * Sum a wallet's COMPLETED ledger to derive its current balance.
+   * The `wallets.balance` column was dropped — the `wallet_balances`
+   * view is the source of truth for casual reads, but inside a
+   * transaction we hold a pessimistic_write lock on the wallet row
+   * and run the SUM through the same manager so the read sees a
+   * consistent snapshot.
+   */
+  async getLedgerBalance(
+    walletId: string,
+    manager?: import('typeorm').EntityManager,
+  ): Promise<Naira> {
+    const m = manager ?? this.dataSource.manager;
+    const row = await m
+      .createQueryBuilder()
+      .select(
+        `COALESCE(SUM(CASE
+           WHEN t."type" = 'credit' AND t."status" = 'completed' THEN t."amount"
+           WHEN t."type" = 'debit'  AND t."status" = 'completed' THEN -t."amount"
+           ELSE 0 END), 0)`,
+        'balance',
+      )
+      .from('transactions', 't')
+      .where('t."walletId" = :walletId', { walletId })
+      .getRawOne<{ balance: string }>();
+    return naira(String(row?.balance ?? 0)) as Naira;
+  }
+
+  /**
+   * Attach the ledger-derived balance to a Wallet instance so
+   * downstream callers can continue reading `wallet.balance`. The
+   * field is no longer a persisted column — assignments to it are
+   * discarded on save (TypeORM doesn't know about it).
+   */
+  private async hydrateBalance(
+    wallet: Wallet,
+    manager?: import('typeorm').EntityManager,
+  ): Promise<Wallet> {
+    wallet.balance = await this.getLedgerBalance(wallet.id, manager);
+    return wallet;
+  }
+
+  /**
+   * Get wallet by user ID, with balance hydrated from the ledger.
    */
   async getWalletByUserId(userId: string): Promise<Wallet> {
     let wallet = await this.walletRepository.findOne({
@@ -192,7 +234,7 @@ export class WalletService {
       wallet = await this.createWallet(userId);
     }
 
-    return wallet;
+    return this.hydrateBalance(wallet);
   }
 
   /**
@@ -252,12 +294,11 @@ export class WalletService {
       }
 
       const amount = naira(String(addFundsDto.amount));
-      const newBalance = wallet.balance.plus(amount) as Naira;
-
-      wallet.balance = newBalance;
-      wallet.totalEarnings = wallet.totalEarnings.plus(amount) as Naira;
-
-      await queryRunner.manager.save(wallet);
+      const currentBalance = await this.getLedgerBalance(
+        wallet.id,
+        queryRunner.manager,
+      );
+      const newBalance = currentBalance.plus(amount) as Naira;
 
       const transaction = queryRunner.manager.create(Transaction, {
         walletId: wallet.id,
@@ -309,16 +350,18 @@ export class WalletService {
       }
 
       const amount = naira(String(withdrawDto.amount));
+      const currentBalance = await this.getLedgerBalance(
+        wallet.id,
+        queryRunner.manager,
+      );
 
-      if (wallet.balance.lessThan(amount)) {
+      if (currentBalance.lessThan(amount)) {
         throw new BadRequestException('Insufficient balance');
       }
 
-      const newBalance = wallet.balance.minus(amount) as Naira;
+      const newBalance = currentBalance.minus(amount) as Naira;
 
-      wallet.balance = newBalance;
       wallet.totalWithdrawals = wallet.totalWithdrawals.plus(amount) as Naira;
-
       await queryRunner.manager.save(wallet);
 
       const transaction = queryRunner.manager.create(Transaction, {
@@ -330,82 +373,6 @@ export class WalletService {
         paymentMethod: PaymentMethod.BANK_TRANSFER,
         description: withdrawDto.description || 'Wallet withdrawal',
         reference: withdrawDto.reference,
-      });
-
-      const savedTransaction = await queryRunner.manager.save(transaction);
-
-      await queryRunner.commitTransaction();
-
-      return savedTransaction;
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      throw error;
-    } finally {
-      await queryRunner.release();
-    }
-  }
-
-  /**
-   * Process order payment (for drivers)
-   */
-  async processOrderPayment(
-    userId: string,
-    orderId: string,
-    amount: Naira | string | number,
-    paymentMethod: PaymentMethod = PaymentMethod.CASH,
-  ): Promise<Transaction> {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      const wallet = await queryRunner.manager.findOne(Wallet, {
-        where: { userId },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      if (!wallet) {
-        throw new NotFoundException('Wallet not found');
-      }
-
-      if (wallet.isLocked) {
-        throw new ForbiddenException('Wallet is locked');
-      }
-
-      const orderAmount = naira(String(amount));
-
-      // Calculate commission
-      const commissionPercentage = await this.configService.getNumber(
-        ConfigKey.DRIVER_COMMISSION_PERCENTAGE,
-        20,
-      );
-      const commission = orderAmount
-        .times(commissionPercentage)
-        .dividedBy(100) as Naira;
-      const driverEarnings = orderAmount.minus(commission) as Naira;
-
-      const newBalance = wallet.balance.plus(driverEarnings) as Naira;
-
-      wallet.balance = newBalance;
-      wallet.totalEarnings = wallet.totalEarnings.plus(driverEarnings) as Naira;
-
-      await queryRunner.manager.save(wallet);
-
-      const transaction = queryRunner.manager.create(Transaction, {
-        walletId: wallet.id,
-        orderId,
-        type: TransactionType.CREDIT,
-        amount: driverEarnings,
-        commission,
-        balanceAfter: newBalance,
-        status: TransactionStatus.COMPLETED,
-        paymentMethod,
-        description: `Payment for order ${orderId}`,
-        metadata: {
-          orderAmount: orderAmount.toFixed(2),
-          commission: commission.toFixed(2),
-          commissionPercentage,
-        },
       });
 
       const savedTransaction = await queryRunner.manager.save(transaction);
@@ -540,20 +507,24 @@ export class WalletService {
         throw new ForbiddenException('Wallet is locked');
       }
 
-      if (wallet.balance.lessThan(amount)) {
+      const currentBalance = await this.getLedgerBalance(
+        wallet.id,
+        queryRunner.manager,
+      );
+      if (currentBalance.lessThan(amount)) {
         throw new BadRequestException(
           `Insufficient wallet balance. ₦${amount.toString()} required to cover this order's charge.`,
         );
       }
 
-      // No balance mutation — the PENDING row encodes the obligation
-      // without touching the displayed (completed-only) balance.
+      // PENDING row encodes the obligation without moving the
+      // ledger balance — completion flips it to COMPLETED.
       const transaction = queryRunner.manager.create(Transaction, {
         walletId: wallet.id,
         orderId,
         type: TransactionType.DEBIT,
         amount,
-        balanceAfter: wallet.balance,
+        balanceAfter: currentBalance,
         status: TransactionStatus.PENDING,
         paymentMethod: PaymentMethod.WALLET,
         description: `Order charge hold for order ${orderId}`,
@@ -679,6 +650,10 @@ export class WalletService {
       }
 
       let firstSaved: Transaction | null = null;
+      let runningBalance = await this.getLedgerBalance(
+        wallet.id,
+        queryRunner.manager,
+      );
 
       if (platformCharge.greaterThan(NAIRA_ZERO)) {
         const hold = await queryRunner.manager
@@ -691,17 +666,15 @@ export class WalletService {
           .getOne();
 
         if (hold && hold.status === TransactionStatus.PENDING) {
-          // The accept-time hold matures into a real deduction.
-          const newBalance = wallet.balance.minus(hold.amount) as Naira;
-          wallet.balance = newBalance;
+          // Hold matures into a real deduction.
+          runningBalance = runningBalance.minus(hold.amount) as Naira;
           hold.status = TransactionStatus.COMPLETED;
-          hold.balanceAfter = newBalance;
+          hold.balanceAfter = runningBalance;
           hold.description = `Order completion charge for order ${orderId}`;
           firstSaved = await queryRunner.manager.save(hold);
         } else if (!hold) {
-          // Legacy / cash flow that never wrote a hold — write a
-          // COMPLETED row inline so the ledger still reflects the
-          // platform's revenue and balance moves consistently.
+          // No accept-time hold (legacy / cash flow) — write a fresh
+          // COMPLETED row so the ledger reflects the platform's cut.
           const existsCompletion = await queryRunner.manager
             .createQueryBuilder(Transaction, 'txn')
             .where('txn.walletId = :walletId', { walletId: wallet.id })
@@ -711,14 +684,13 @@ export class WalletService {
             })
             .getOne();
           if (!existsCompletion) {
-            const newBalance = wallet.balance.minus(platformCharge) as Naira;
-            wallet.balance = newBalance;
+            runningBalance = runningBalance.minus(platformCharge) as Naira;
             const inline = queryRunner.manager.create(Transaction, {
               walletId: wallet.id,
               orderId,
               type: TransactionType.DEBIT,
               amount: platformCharge,
-              balanceAfter: newBalance,
+              balanceAfter: runningBalance,
               status: TransactionStatus.COMPLETED,
               paymentMethod: PaymentMethod.WALLET,
               description: `Order completion charge for order ${orderId}`,
@@ -743,14 +715,13 @@ export class WalletService {
           })
           .getOne();
         if (!existsInsurance) {
-          const newBalance = wallet.balance.minus(insuranceFee) as Naira;
-          wallet.balance = newBalance;
+          runningBalance = runningBalance.minus(insuranceFee) as Naira;
           const insuranceRow = queryRunner.manager.create(Transaction, {
             walletId: wallet.id,
             orderId,
             type: TransactionType.DEBIT,
             amount: insuranceFee,
-            balanceAfter: newBalance,
+            balanceAfter: runningBalance,
             status: TransactionStatus.COMPLETED,
             paymentMethod: PaymentMethod.WALLET,
             description: `Order insurance fee for order ${orderId}`,
@@ -760,7 +731,6 @@ export class WalletService {
         }
       }
 
-      await queryRunner.manager.save(wallet);
       await queryRunner.commitTransaction();
       return firstSaved;
     } catch (error) {

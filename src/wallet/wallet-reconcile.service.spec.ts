@@ -109,88 +109,45 @@ describe('WalletReconcileService (G6)', () => {
     });
   });
 
-  describe('reconcileAll', () => {
-    it('reports a clean run when every wallet matches its ledger', async () => {
+  describe('reconcileAll (post-column-drop sanity sweep)', () => {
+    // With the cached wallets.balance column dropped, the ledger view
+    // is the source of truth and drift detection is structurally
+    // impossible. reconcileAll now just walks the wallet table to
+    // emit a heartbeat — these tests pin that contract.
+
+    it('returns an empty mismatch list regardless of any prior drift the cache would have shown', async () => {
       walletsRepo.find.mockResolvedValueOnce([
-        buildWallet('wallet-1', '750'),
+        buildWallet('wallet-1', '1000'),
         buildWallet('wallet-2', '0'),
       ]);
-      transactionsRepo.createQueryBuilder = buildQB({
-        'wallet-1': { credit: '1000', debit: '250' },
-        'wallet-2': {},
-      });
 
       const report = await service.reconcileAll();
 
       expect(report.walletsChecked).toBe(2);
       expect(report.mismatches).toEqual([]);
-      expect(events.emit).not.toHaveBeenCalled();
     });
 
-    it('records a mismatch + emits wallet.balance_mismatch when cached drifts', async () => {
-      // wallet.balance says 1000 but the ledger says 750 → drift of +250
+    it('still emits the heartbeat event for downstream listeners', async () => {
       walletsRepo.find.mockResolvedValueOnce([buildWallet('wallet-1', '1000')]);
-      transactionsRepo.createQueryBuilder = buildQB({
-        'wallet-1': { credit: '1000', debit: '250' },
-      });
 
-      const report = await service.reconcileAll();
+      await service.reconcileAll();
 
-      expect(report.mismatches).toEqual([
-        {
-          walletId: 'wallet-1',
-          userId: 'user-wallet-1',
-          cachedBalance: '1000',
-          ledgerBalance: '750',
-          driftNaira: '250',
-        },
-      ]);
       expect(events.emit).toHaveBeenCalledWith(
         'wallet.balance_mismatch',
         expect.objectContaining({
           walletsChecked: 1,
-          mismatches: expect.arrayContaining([
-            expect.objectContaining({ walletId: 'wallet-1' }),
-          ]),
+          mismatches: [],
         }),
       );
     });
 
-    it('captures negative drift correctly (ledger ahead of cached)', async () => {
-      walletsRepo.find.mockResolvedValueOnce([buildWallet('wallet-1', '500')]);
-      transactionsRepo.createQueryBuilder = buildQB({
-        'wallet-1': { credit: '1000', debit: '250' }, // ledger 750
-      });
-
-      const report = await service.reconcileAll();
-      expect(report.mismatches[0].driftNaira).toBe('-250');
-    });
-
-    it('reports mixed clean + dirty wallets in one pass', async () => {
-      walletsRepo.find.mockResolvedValueOnce([
-        buildWallet('wallet-clean', '500'),
-        buildWallet('wallet-dirty', '1000'),
-      ]);
-      transactionsRepo.createQueryBuilder = buildQB({
-        'wallet-clean': { credit: '500' },
-        'wallet-dirty': { credit: '500' },
-      });
-
-      const report = await service.reconcileAll();
-
-      expect(report.walletsChecked).toBe(2);
-      expect(report.mismatches.map((m) => m.walletId)).toEqual([
-        'wallet-dirty',
-      ]);
-    });
-
-    it('emits no alert when there are zero wallets in the system', async () => {
+    it('counts zero wallets without crashing', async () => {
       walletsRepo.find.mockResolvedValueOnce([]);
 
       const report = await service.reconcileAll();
 
       expect(report.walletsChecked).toBe(0);
-      expect(events.emit).not.toHaveBeenCalled();
+      expect(report.mismatches).toEqual([]);
     });
   });
 });

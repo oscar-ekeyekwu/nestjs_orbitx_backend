@@ -74,7 +74,12 @@ describe('PayoutsService (G4)', () => {
   let walletsRepo: { createQueryBuilder: jest.Mock };
   let usersRepo: { findOne: jest.Mock };
   let dataSource: { transaction: jest.Mock };
-  let manager: { findOne: jest.Mock; save: jest.Mock; insert: jest.Mock };
+  let manager: {
+    findOne: jest.Mock;
+    save: jest.Mock;
+    insert: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
   let config: { getNumber: jest.Mock };
   let gateway: jest.Mocked<IPaymentGateway>;
   let registry: {
@@ -100,9 +105,14 @@ describe('PayoutsService (G4)', () => {
     walletsRepo = {
       createQueryBuilder: jest.fn().mockReturnValue({
         innerJoinAndSelect: jest.fn().mockReturnThis(),
+        innerJoin: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         getMany: jest.fn().mockResolvedValue([]),
+        getRawAndEntities: jest
+          .fn()
+          .mockResolvedValue({ entities: [], raw: [] }),
       }),
     };
     usersRepo = { findOne: jest.fn() };
@@ -112,6 +122,18 @@ describe('PayoutsService (G4)', () => {
       insert: jest.fn(() =>
         Promise.resolve({ identifiers: [], generatedMaps: [] }),
       ),
+      // settleAuto/manualComplete now compute balanceAfter through a
+      // ledger SUM on the active manager.
+      createQueryBuilder: jest.fn(() => {
+        const builder: Record<string, unknown> = {};
+        Object.assign(builder, {
+          select: jest.fn(() => builder),
+          from: jest.fn(() => builder),
+          where: jest.fn(() => builder),
+          getRawOne: jest.fn().mockResolvedValue({ balance: '0' }),
+        });
+        return builder;
+      }),
     };
     dataSource = {
       transaction: jest.fn((cb: (m: EntityManager) => unknown) =>
@@ -159,9 +181,14 @@ describe('PayoutsService (G4)', () => {
       const wallet = buildWallet();
       walletsRepo.createQueryBuilder.mockReturnValueOnce({
         innerJoinAndSelect: jest.fn().mockReturnThis(),
+        innerJoin: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([wallet]),
+        getRawAndEntities: jest.fn().mockResolvedValue({
+          entities: [wallet],
+          raw: [{ wb_balance: wallet.balance.toString() }],
+        }),
       });
 
       const created = await service.generateWeeklyPayouts();
@@ -178,11 +205,17 @@ describe('PayoutsService (G4)', () => {
     });
 
     it('is idempotent — unique-violation on (recipient, periodStart) is swallowed', async () => {
+      const wallet = buildWallet();
       walletsRepo.createQueryBuilder.mockReturnValueOnce({
         innerJoinAndSelect: jest.fn().mockReturnThis(),
+        innerJoin: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([buildWallet()]),
+        getRawAndEntities: jest.fn().mockResolvedValue({
+          entities: [wallet],
+          raw: [{ wb_balance: wallet.balance.toString() }],
+        }),
       });
       payoutsRepo.save.mockRejectedValueOnce(
         new Error('duplicate key value violates unique constraint'),
@@ -273,11 +306,27 @@ describe('PayoutsService (G4)', () => {
   });
 
   describe('markManualComplete', () => {
-    it('debits wallet + inserts Transaction + flips status to PAID', async () => {
+    it('settles via ledger SUM + inserts Transaction + flips status to PAID', async () => {
+      // Ledger-driven model: settlement reads the live ledger
+      // balance through the manager (no wallet.balance write). Mock
+      // the ledger SUM to '5000' so the payout passes the overdraft
+      // guard.
       const wallet = buildWallet({ balance: naira('5000') });
       manager.findOne
         .mockResolvedValueOnce(buildPayout())
         .mockResolvedValueOnce(wallet);
+      (manager.createQueryBuilder as jest.Mock).mockImplementationOnce(
+        () => {
+          const builder: Record<string, unknown> = {};
+          Object.assign(builder, {
+            select: jest.fn(() => builder),
+            from: jest.fn(() => builder),
+            where: jest.fn(() => builder),
+            getRawOne: jest.fn().mockResolvedValue({ balance: '5000' }),
+          });
+          return builder;
+        },
+      );
 
       const result = await service.markManualComplete(
         'payout-1',
@@ -288,7 +337,6 @@ describe('PayoutsService (G4)', () => {
       expect(result.status).toBe(PayoutStatus.PAID);
       expect(result.manualReceiptReference).toBe('NIBSS-12345');
       expect(result.completedBy).toBe('admin-1');
-      expect(wallet.balance.toString()).toBe('0');
       expect(manager.insert).toHaveBeenCalledWith(
         Transaction,
         expect.objectContaining({

@@ -265,6 +265,11 @@ export class PushFanoutEventSubscribers {
     }> = await this.driverProfiles
       .createQueryBuilder('dp')
       .innerJoin(Wallet, 'w', 'w."userId" = dp."userId"')
+      .innerJoin(
+        '"wallet_balances"',
+        'wb',
+        'wb."wallet_id" = w."id"',
+      )
       .where('dp."isOnline" = true')
       // Widened — Phase 3 — to include APPROVED. The chained
       // approved → active transition can fail (admin patches that
@@ -283,7 +288,7 @@ export class PushFanoutEventSubscribers {
       .andWhere('dp."isOnDelivery" = false')
       .andWhere('dp."currentLatitude" IS NOT NULL')
       .andWhere('dp."currentLongitude" IS NOT NULL')
-      .andWhere('w."balance" >= :charge', {
+      .andWhere('wb."balance" >= :charge', {
         charge: event.platformChargeNaira,
       })
       // MAX_ORDERS_PER_DRIVER — exclude drivers whose live active-order
@@ -561,7 +566,12 @@ export class PushFanoutEventSubscribers {
     const fundedCount = await this.driverProfiles
       .createQueryBuilder('dp')
       .innerJoin(Wallet, 'w', 'w."userId" = dp."userId"')
-      .where('w."balance" >= :charge', { charge })
+      .innerJoin(
+        '"wallet_balances"',
+        'wb',
+        'wb."wallet_id" = w."id"',
+      )
+      .where('wb."balance" >= :charge', { charge })
       .getCount();
 
     return {

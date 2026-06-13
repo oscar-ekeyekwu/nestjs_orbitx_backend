@@ -132,6 +132,8 @@ export class PaymentService {
     // Mint the pending row first. Reference = transaction.id, which
     // Paystack echoes back verbatim on the webhook so the handler does
     // a single-row lookup without scanning metadata.
+    // balanceAfter on a PENDING row is informational — settlement
+    // recomputes the post-balance against the live ledger.
     const txn = await this.transactionsRepo.save(
       this.transactionsRepo.create({
         walletId: wallet.id,
@@ -139,7 +141,7 @@ export class PaymentService {
         type: TransactionType.CREDIT,
         amount: naira(amountNaira.toString()),
         commission: NAIRA_ZERO,
-        balanceAfter: wallet.balance,
+        balanceAfter: NAIRA_ZERO,
         status: TransactionStatus.PENDING,
         paymentMethod: PaymentMethod.CARD,
         description: `Paystack charge for order ${orderId}`,
@@ -197,11 +199,13 @@ export class PaymentService {
         throw new NotFoundException(`Wallet ${txn.walletId} not found`);
       }
 
-      wallet.balance = wallet.balance.plus(txn.amount) as Naira;
-      await manager.save(wallet);
-
+      // Compute balanceAfter against the live ledger; nothing to
+      // mutate on the wallet itself — the view derives balance from
+      // completed transactions, and we're about to flip this one to
+      // COMPLETED.
+      const currentBalance = await this.ledgerBalance(wallet.id, manager);
       txn.status = TransactionStatus.COMPLETED;
-      txn.balanceAfter = wallet.balance;
+      txn.balanceAfter = currentBalance.plus(txn.amount) as Naira;
       await manager.save(txn);
     });
 
@@ -318,5 +322,30 @@ export class PaymentService {
     txn.status = TransactionStatus.FAILED;
     await this.transactionsRepo.save(txn);
     this.eventEmitter.emit('payment.failed', { reference });
+  }
+
+  /**
+   * Compute a wallet's COMPLETED ledger sum inside the caller's
+   * transaction manager. Matches the canonical `wallet_balances`
+   * view but is safe to read while holding a row lock on the
+   * wallet.
+   */
+  private async ledgerBalance(
+    walletId: string,
+    manager: import('typeorm').EntityManager,
+  ): Promise<Naira> {
+    const row = await manager
+      .createQueryBuilder()
+      .select(
+        `COALESCE(SUM(CASE
+           WHEN t."type" = 'credit' AND t."status" = 'completed' THEN t."amount"
+           WHEN t."type" = 'debit'  AND t."status" = 'completed' THEN -t."amount"
+           ELSE 0 END), 0)`,
+        'balance',
+      )
+      .from('transactions', 't')
+      .where('t."walletId" = :walletId', { walletId })
+      .getRawOne<{ balance: string }>();
+    return naira(String(row?.balance ?? 0)) as Naira;
   }
 }

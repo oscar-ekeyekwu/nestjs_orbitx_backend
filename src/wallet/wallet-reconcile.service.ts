@@ -26,14 +26,16 @@ export interface ReconcileReport {
 /**
  * G6 — wallet-balance reconcile.
  *
- * Computes `sum(credits) - sum(debits)` from the transactions table for
- * every wallet and compares it to the cached `wallet.balance` column.
- * Mismatches log a structured warning + emit `wallet.balance_mismatch`
- * for downstream alerting (email digest, push to oncall, etc.).
+ * Pre-migration, this swept every wallet and compared the cached
+ * `wallets.balance` column against the COMPLETED ledger sum. The
+ * column was dropped (see WalletBalanceView migration); the
+ * `wallet_balances` view is now the single source of truth, so by
+ * construction the cached and ledger values are identical.
  *
- * Only COMPLETED transactions are summed — pending / failed rows
- * represent in-flight or aborted money movements that haven't settled
- * against the wallet yet.
+ * The class is kept (and the cron call site still ticks through) so
+ * any historical wiring stays intact, but `reconcileAll` is a thin
+ * sanity-sweep that walks every wallet and logs counts. Negative-
+ * balance detection is the natural next addition.
  */
 @Injectable()
 export class WalletReconcileService {
@@ -48,8 +50,10 @@ export class WalletReconcileService {
   ) {}
 
   /**
-   * Sums COMPLETED credits and debits for a single wallet and returns
-   * the ledger-derived balance.
+   * Sum a single wallet's COMPLETED ledger. Useful for ad-hoc
+   * introspection; the live read path uses
+   * `WalletService.getLedgerBalance` (same query, exposes the active
+   * transaction manager for locking).
    */
   async ledgerBalance(walletId: string): Promise<Naira> {
     const rows = await this.transactionsRepo
@@ -73,41 +77,22 @@ export class WalletReconcileService {
   }
 
   /**
-   * Walks every wallet and reports mismatches between
-   * wallet.balance and the ledger-derived total. Doesn't mutate any
-   * row — operator decides whether to auto-correct or investigate.
+   * Sanity-sweep. With the cached column gone, balance drift is
+   * structurally impossible — the report's `mismatches` is always
+   * empty. Retained so the existing cron job (or any external
+   * caller) keeps compiling; emits an INFO log per run.
    */
   async reconcileAll(): Promise<ReconcileReport> {
     const wallets = await this.walletsRepo.find();
-    const mismatches: WalletMismatch[] = [];
-    for (const wallet of wallets) {
-      const ledger = await this.ledgerBalance(wallet.id);
-      if (!wallet.balance.eq(ledger)) {
-        const drift = wallet.balance.minus(ledger) as Naira;
-        mismatches.push({
-          walletId: wallet.id,
-          userId: wallet.userId,
-          cachedBalance: wallet.balance.toString(),
-          ledgerBalance: ledger.toString(),
-          driftNaira: drift.toString(),
-        });
-        this.logger.warn(
-          `Wallet balance drift wallet=${wallet.id} user=${wallet.userId} ` +
-            `cached=${wallet.balance.toString()} ledger=${ledger.toString()} ` +
-            `drift=${drift.toString()}`,
-        );
-      }
-    }
-    if (mismatches.length > 0) {
-      this.events.emit('wallet.balance_mismatch', {
-        walletsChecked: wallets.length,
-        mismatches,
-      });
-    } else {
-      this.logger.log(
-        `Wallet reconcile clean — ${wallets.length} wallets balanced.`,
-      );
-    }
-    return { walletsChecked: wallets.length, mismatches };
+    this.logger.log(
+      `Wallet reconcile sweep — ${wallets.length} wallets (ledger is canonical; drift detection retired).`,
+    );
+    // Emit the same event shape with empty mismatches so any
+    // listener (digest mailer etc.) keeps receiving heartbeats.
+    this.events.emit('wallet.balance_mismatch', {
+      walletsChecked: wallets.length,
+      mismatches: [],
+    });
+    return { walletsChecked: wallets.length, mismatches: [] };
   }
 }
