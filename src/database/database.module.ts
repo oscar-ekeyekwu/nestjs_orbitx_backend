@@ -24,6 +24,21 @@ import * as path from 'path';
         // raw query stream back for a debugging session.
         const dbLogging = config.get<string>('DB_LOGGING');
         const verbose = dbLogging === 'verbose' || dbLogging === 'all';
+
+        // SSL was previously hardcoded on whenever NODE_ENV=production,
+        // which broke deploys against Postgres servers that don't
+        // accept SSL ("The server does not support SSL connections").
+        // Make it env-driven: DB_SSL=true to opt in, anything else
+        // (including unset) means plain TCP. In production we still
+        // default to ON when the var isn't set, to preserve the prior
+        // behavior for hosted-PG deployers that did rely on it.
+        const sslRaw = (config.get<string>('DB_SSL') ?? '').toLowerCase();
+        const sslOn =
+          sslRaw === 'true' ||
+          sslRaw === '1' ||
+          sslRaw === 'require' ||
+          (sslRaw === '' && isProd);
+
         return {
           type: 'postgres',
           host: config.get<string>('DB_HOST'),
@@ -42,7 +57,7 @@ import * as path from 'path';
           // so genuinely slow queries still stand out without the
           // every-query noise.
           maxQueryExecutionTime: 500,
-          ssl: isProd ? { rejectUnauthorized: false } : false,
+          ssl: sslOn ? { rejectUnauthorized: false } : false,
         } as DataSourceOptions;
       },
     }),
