@@ -736,9 +736,15 @@ export class OrderRequestsService {
       5,
     );
 
-    // Driver wallet balance for the wallet-coverage filter.
+    // Driver wallet balance for the wallet-coverage filter. The
+    // cached `wallets.balance` column was dropped in the
+    // WalletBalanceView migration; read from the view so the gate
+    // reflects the live ledger.
     const walletRows = (await this.requestsRepo.query(
-      `SELECT balance FROM wallets WHERE "userId" = $1 LIMIT 1`,
+      `SELECT wb."balance" FROM "wallet_balances" wb
+       INNER JOIN "wallets" w ON w."id" = wb."wallet_id"
+       WHERE w."userId" = $1
+       LIMIT 1`,
       [driverId],
     )) as Array<{ balance: string }>;
     const walletBalance = walletRows[0]
