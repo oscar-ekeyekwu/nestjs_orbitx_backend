@@ -26,11 +26,14 @@ export class WalletBalanceView1782200000000 implements MigrationInterface {
     // 1. Reconcile cached balance ↔ ledger drift by writing a single
     //    opening-balance row per wallet that closes the gap. Skip
     //    wallets whose ledger already matches the cache.
+    // NOTE: the transactions table has @CreateDateColumn only — no
+    // updatedAt column. Don't reference it here or the INSERT trips
+    // PostgreSQL 42703 ("column does not exist") on every deploy.
     await queryRunner.query(`
       INSERT INTO "transactions" (
         "id", "walletId", "type", "amount", "commission",
         "balanceAfter", "status", "paymentMethod",
-        "description", "metadata", "createdAt", "updatedAt"
+        "description", "metadata", "createdAt"
       )
       SELECT
         gen_random_uuid(),
@@ -43,7 +46,6 @@ export class WalletBalanceView1782200000000 implements MigrationInterface {
         'wallet',
         'Opening balance reconciliation (wallet.balance column dropped; ledger view introduced)',
         ('{"type":"balance_column_migration_reconciliation"}')::jsonb,
-        NOW(),
         NOW()
       FROM (
         SELECT
