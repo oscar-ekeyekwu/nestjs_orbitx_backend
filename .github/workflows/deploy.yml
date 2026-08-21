@@ -19,7 +19,13 @@ jobs:
 
     steps:
       - name: Checkout Code
+        # actions/checkout defaults to the PR head commit (development) on a
+        # pull_request event — not main. main already has the merge commit
+        # by the time this `closed` event fires, so pin the checkout to it
+        # explicitly to make sure the image is built from main.
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
