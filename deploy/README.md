@@ -277,6 +277,9 @@ the Active radio:
 
 ## Other deploy concerns
 
-- `nginx/` — reverse-proxy + TLS termination config (placeholder; fill in
-  as we wire HTTPS).
+- `nginx/` — reverse-proxy + TLS termination config for api.orbitxng.com.
+  `generate-self-signed-cert.sh` creates a stopgap self-signed cert on the
+  VPS; `orbitx-api.conf` is the sites-available file that terminates TLS
+  with it. See the comment header in `orbitx-api.conf` for install steps
+  and how to later swap in a real cert via `certbot --nginx`.
 - Future docs land here as separate `.md` files alongside this one.
