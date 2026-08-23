@@ -26,6 +26,14 @@ export class FAQ {
   @Column({ default: true })
   isActive: boolean;
 
+  /**
+   * Independent of isActive (which gates mobile-app visibility) — lets
+   * admins curate a smaller subset of FAQs to publish on the public
+   * marketing landing page.
+   */
+  @Column({ default: false })
+  showOnLanding: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 
