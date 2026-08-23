@@ -4,7 +4,21 @@ import {
   IsString,
   IsBoolean,
   MaxLength,
+  Matches,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+import type { TransformFnParams } from 'class-transformer';
+import { normalizeNigerianPhone } from '../../common/utils/phone';
+
+// Same normalization as RegisterDto — coerce local formats to strict
+// E.164 +234XXXXXXXXXX before @Matches runs.
+const normalizePhone = ({ value }: TransformFnParams): unknown => {
+  if (typeof value !== 'string') return value;
+  const normalized = normalizeNigerianPhone(value);
+  return normalized ?? value;
+};
+
+const E164_NG_REGEX = /^\+234\d{10}$/;
 
 export class UpdateUserDto {
   @IsOptional()
@@ -20,7 +34,11 @@ export class UpdateUserDto {
   last_name?: string;
 
   @IsOptional()
+  @Transform(normalizePhone)
   @IsString()
+  @Matches(E164_NG_REGEX, {
+    message: 'phone must be a valid Nigerian phone number',
+  })
   phone?: string;
 
   /**

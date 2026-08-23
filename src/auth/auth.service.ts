@@ -122,7 +122,19 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto, ipAddress?: string, userAgent?: string) {
-    const user = await this.validateUser(loginDto.email, loginDto.password);
+    if (loginDto.email && loginDto.phone) {
+      throw new BadRequestException(
+        'Provide only one of email or phone, not both',
+      );
+    }
+    if (!loginDto.email && !loginDto.phone) {
+      throw new BadRequestException('email or phone is required');
+    }
+
+    const user = await this.validateUser(
+      { email: loginDto.email, phone: loginDto.phone },
+      loginDto.password,
+    );
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
@@ -158,8 +170,13 @@ export class AuthService {
     return this.generateAuthResponse(user);
   }
 
-  async validateUser(email: string, password: string): Promise<User | null> {
-    const user = await this.usersService.findByEmail(email);
+  async validateUser(
+    identifier: { email?: string; phone?: string },
+    password: string,
+  ): Promise<User | null> {
+    const user = identifier.email
+      ? await this.usersService.findByEmail(identifier.email)
+      : await this.usersService.findByPhone(identifier.phone!);
 
     if (!user) {
       return null;

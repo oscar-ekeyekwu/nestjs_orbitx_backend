@@ -41,4 +41,12 @@ export class CreateFaqDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Publish this FAQ on the public marketing landing page.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  showOnLanding?: boolean;
 }

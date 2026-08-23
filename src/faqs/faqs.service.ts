@@ -20,6 +20,13 @@ export class FaqsService {
     });
   }
 
+  async findForLanding(): Promise<FAQ[]> {
+    return this.faqRepo.find({
+      where: { isActive: true, showOnLanding: true },
+      order: { order: 'ASC', createdAt: 'ASC' },
+    });
+  }
+
   async findOne(id: string): Promise<FAQ> {
     const faq = await this.faqRepo.findOne({ where: { id } });
     if (!faq) throw new NotFoundException(`FAQ ${id} not found`);

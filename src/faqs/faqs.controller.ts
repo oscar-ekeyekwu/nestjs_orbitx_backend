@@ -45,6 +45,15 @@ export class FaqsController {
     return this.faqsService.findAll(onlyActive);
   }
 
+  @Get('landing')
+  @ApiOperation({
+    summary:
+      'List FAQs curated for the public marketing landing page (public). Active + showOnLanding only.',
+  })
+  findForLanding() {
+    return this.faqsService.findForLanding();
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a single FAQ by ID (public)' })
   findOne(@Param('id') id: string) {
