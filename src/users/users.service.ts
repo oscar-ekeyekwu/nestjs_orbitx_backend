@@ -39,6 +39,16 @@ export class UsersService {
       throw new ConflictException('Email already exists');
     }
 
+    if (registerDto.phone) {
+      const existingPhone = await repo.findOne({
+        where: { phone: registerDto.phone },
+      });
+
+      if (existingPhone) {
+        throw new ConflictException('Phone number already exists');
+      }
+    }
+
     const user = repo.create(registerDto);
     return repo.save(user);
   }
@@ -107,6 +117,10 @@ export class UsersService {
     return this.usersRepository.findOne({ where: { email } });
   }
 
+  async findByPhone(phone: string): Promise<User | null> {
+    return this.usersRepository.findOne({ where: { phone } });
+  }
+
   async findById(id: string): Promise<User | null> {
     return this.usersRepository.findOne({ where: { id } });
   }
@@ -160,6 +174,13 @@ export class UsersService {
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    if (updateData.phone && updateData.phone !== user.phone) {
+      const existingPhone = await this.findByPhone(updateData.phone);
+      if (existingPhone) {
+        throw new ConflictException('Phone number already exists');
+      }
     }
 
     Object.assign(user, updateData);

@@ -29,7 +29,7 @@ export class User {
   @Exclude()
   password: string;
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, unique: true })
   phone: string;
 
   @Column({ nullable: true })
