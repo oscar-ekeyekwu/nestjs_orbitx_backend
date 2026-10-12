@@ -346,6 +346,6 @@ export class PaymentService {
       .from('transactions', 't')
       .where('t."walletId" = :walletId', { walletId })
       .getRawOne<{ balance: string }>();
-    return naira(String(row?.balance ?? 0)) as Naira;
+    return naira(String(row?.balance ?? 0));
   }
 }

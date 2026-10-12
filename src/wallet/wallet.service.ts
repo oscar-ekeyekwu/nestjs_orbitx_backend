@@ -204,7 +204,7 @@ export class WalletService {
       .from('transactions', 't')
       .where('t."walletId" = :walletId', { walletId })
       .getRawOne<{ balance: string }>();
-    return naira(String(row?.balance ?? 0)) as Naira;
+    return naira(String(row?.balance ?? 0));
   }
 
   /**
@@ -736,7 +736,8 @@ export class WalletService {
             description: `Order insurance fee for order ${orderId}`,
             metadata: { type: 'order_insurance_fee', orderId },
           });
-          firstSaved = (await queryRunner.manager.save(insuranceRow)) ?? firstSaved;
+          firstSaved =
+            (await queryRunner.manager.save(insuranceRow)) ?? firstSaved;
         }
       }
 
@@ -792,7 +793,7 @@ export class WalletService {
         .andWhere('o."status" = :status', { status: 'delivered' })
         .getRawOne<{ total: string }>();
       if (row?.total != null) {
-        earningsTotal = naira(String(row.total)) as Naira;
+        earningsTotal = naira(String(row.total));
       }
     } catch (err) {
       this.logger.warn(

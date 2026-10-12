@@ -315,18 +315,16 @@ describe('PayoutsService (G4)', () => {
       manager.findOne
         .mockResolvedValueOnce(buildPayout())
         .mockResolvedValueOnce(wallet);
-      (manager.createQueryBuilder as jest.Mock).mockImplementationOnce(
-        () => {
-          const builder: Record<string, unknown> = {};
-          Object.assign(builder, {
-            select: jest.fn(() => builder),
-            from: jest.fn(() => builder),
-            where: jest.fn(() => builder),
-            getRawOne: jest.fn().mockResolvedValue({ balance: '5000' }),
-          });
-          return builder;
-        },
-      );
+      manager.createQueryBuilder.mockImplementationOnce(() => {
+        const builder: Record<string, unknown> = {};
+        Object.assign(builder, {
+          select: jest.fn(() => builder),
+          from: jest.fn(() => builder),
+          where: jest.fn(() => builder),
+          getRawOne: jest.fn().mockResolvedValue({ balance: '5000' }),
+        });
+        return builder;
+      });
 
       const result = await service.markManualComplete(
         'payout-1',

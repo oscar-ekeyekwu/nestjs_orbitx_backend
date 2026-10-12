@@ -101,9 +101,7 @@ describe('OrdersService.markCustomerPaid', () => {
 
     const result = await service.markCustomerPaid('order-1', 'cust-1');
 
-    expect(result.paymentStatus).toBe(
-      OrderPaymentStatus.CUSTOMER_MARKED_PAID,
-    );
+    expect(result.paymentStatus).toBe(OrderPaymentStatus.CUSTOMER_MARKED_PAID);
     expect(result.customerMarkedPaidAt).toBeInstanceOf(Date);
     expect(realtimeGateway.emitOrderStatusUpdate).toHaveBeenCalled();
   });
@@ -137,9 +135,7 @@ describe('OrdersService.markCustomerPaid', () => {
     const { service, realtimeGateway } = buildService(mut);
 
     const result = await service.markCustomerPaid('order-1', 'cust-1');
-    expect(result.paymentStatus).toBe(
-      OrderPaymentStatus.CUSTOMER_MARKED_PAID,
-    );
+    expect(result.paymentStatus).toBe(OrderPaymentStatus.CUSTOMER_MARKED_PAID);
     expect(result.customerMarkedPaidAt).toBe(stamp);
     expect(realtimeGateway.emitOrderStatusUpdate).not.toHaveBeenCalled();
   });

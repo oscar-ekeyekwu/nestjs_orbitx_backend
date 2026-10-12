@@ -80,11 +80,7 @@ export class PayoutsService {
     const wallets = await this.walletsRepo
       .createQueryBuilder('wallet')
       .innerJoinAndSelect('wallet.user', 'user')
-      .innerJoin(
-        '"wallet_balances"',
-        'wb',
-        'wb."wallet_id" = wallet."id"',
-      )
+      .innerJoin('"wallet_balances"', 'wb', 'wb."wallet_id" = wallet."id"')
       .addSelect('wb."balance"', 'wb_balance')
       .where('user.role = :role', { role: UserRole.DRIVER })
       .andWhere('user.isActive = :active', { active: true })
@@ -97,7 +93,7 @@ export class PayoutsService {
       const raw = wallets.raw[i] as { wb_balance: string | null };
       // Hydrate the runtime-only balance field with the value the
       // view returned so save() / amount: wallet.balance works.
-      wallet.balance = naira(String(raw?.wb_balance ?? '0')) as Naira;
+      wallet.balance = naira(String(raw?.wb_balance ?? '0'));
       try {
         const row = await this.payoutsRepo.save(
           this.payoutsRepo.create({
@@ -367,7 +363,7 @@ export class PayoutsService {
       .from('transactions', 't')
       .where('t."walletId" = :walletId', { walletId })
       .getRawOne<{ balance: string }>();
-    return naira(String(row?.balance ?? 0)) as Naira;
+    return naira(String(row?.balance ?? 0));
   }
 
   private async markFailed(id: string, reason: string): Promise<void> {

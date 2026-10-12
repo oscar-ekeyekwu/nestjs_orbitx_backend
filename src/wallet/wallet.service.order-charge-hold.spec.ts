@@ -45,11 +45,9 @@ function buildService(opts: {
       andWhere: jest.fn(() => builder),
       groupBy: jest.fn(() => builder),
       setParameters: jest.fn(() => builder),
-      getRawOne: jest
-        .fn()
-        .mockResolvedValue({
-          balance: opts.ledgerBalance ?? opts.wallet?.balance?.toString() ?? '0',
-        }),
+      getRawOne: jest.fn().mockResolvedValue({
+        balance: opts.ledgerBalance ?? opts.wallet?.balance?.toString() ?? '0',
+      }),
       getRawMany: jest.fn().mockResolvedValue([]),
       getOne: jest.fn().mockResolvedValue(opts.existingHold ?? null),
     });

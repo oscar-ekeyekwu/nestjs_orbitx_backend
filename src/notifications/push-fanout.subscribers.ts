@@ -253,10 +253,7 @@ export class PushFanoutEventSubscribers {
     // work. Counted live off the orders table so a stuck
     // isOnDelivery flag can't keep a freed driver out of the pool
     // and a missing flag can't sneak an at-cap driver in.
-    const cap = await this.config.getNumber(
-      ConfigKey.MAX_ORDERS_PER_DRIVER,
-      1,
-    );
+    const cap = await this.config.getNumber(ConfigKey.MAX_ORDERS_PER_DRIVER, 1);
 
     const candidates: Array<{
       userId: string;
@@ -265,11 +262,7 @@ export class PushFanoutEventSubscribers {
     }> = await this.driverProfiles
       .createQueryBuilder('dp')
       .innerJoin(Wallet, 'w', 'w."userId" = dp."userId"')
-      .innerJoin(
-        '"wallet_balances"',
-        'wb',
-        'wb."wallet_id" = w."id"',
-      )
+      .innerJoin('"wallet_balances"', 'wb', 'wb."wallet_id" = w."id"')
       .where('dp."isOnline" = true')
       // Widened — Phase 3 — to include APPROVED. The chained
       // approved → active transition can fail (admin patches that
@@ -566,11 +559,7 @@ export class PushFanoutEventSubscribers {
     const fundedCount = await this.driverProfiles
       .createQueryBuilder('dp')
       .innerJoin(Wallet, 'w', 'w."userId" = dp."userId"')
-      .innerJoin(
-        '"wallet_balances"',
-        'wb',
-        'wb."wallet_id" = w."id"',
-      )
+      .innerJoin('"wallet_balances"', 'wb', 'wb."wallet_id" = w."id"')
       .where('wb."balance" >= :charge', { charge })
       .getCount();
 

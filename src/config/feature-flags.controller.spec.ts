@@ -223,13 +223,10 @@ describe('FeatureFlagsController', () => {
         )
         .mockImplementation(() => undefined);
 
-      await controller.update(
-        { orderPaymentProofRequired: true },
-        {
-          id: 'admin-1',
-          email: 'jane@orbit.com',
-        } as unknown as Parameters<typeof controller.update>[1],
-      );
+      await controller.update({ orderPaymentProofRequired: true }, {
+        id: 'admin-1',
+        email: 'jane@orbit.com',
+      } as unknown as Parameters<typeof controller.update>[1]);
 
       const audited = logSpy.mock.calls.find(([msg]) =>
         String(msg).includes('orderPaymentProofRequired'),
