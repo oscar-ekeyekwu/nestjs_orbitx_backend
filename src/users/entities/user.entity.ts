@@ -29,11 +29,11 @@ export class User {
   @Exclude()
   password: string;
 
-  @Column({ nullable: true, unique: true })
-  phone: string;
+  @Column({ type: 'varchar', nullable: true, unique: true })
+  phone: string | null;
 
-  @Column({ nullable: true })
-  avatar: string;
+  @Column({ type: 'varchar', nullable: true })
+  avatar: string | null;
 
   @Column({
     type: 'enum',
@@ -42,8 +42,8 @@ export class User {
   })
   role: UserRole;
 
-  @Column({ nullable: true })
-  googleId: string;
+  @Column({ type: 'varchar', nullable: true })
+  googleId: string | null;
 
   @Column({ default: false })
   isEmailVerified: boolean;
