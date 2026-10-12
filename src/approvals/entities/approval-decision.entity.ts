@@ -23,6 +23,8 @@ export enum ApprovalTargetType {
   // PAY-1 — audit row for credential / activation events on the
   // payment_providers table.
   PAYMENT_PROVIDER = 'payment_provider',
+  // Admin-initiated permanent deletion of a customer / driver account.
+  USER = 'user',
 }
 
 export enum ApprovalAction {

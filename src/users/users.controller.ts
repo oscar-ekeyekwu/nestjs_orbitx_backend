@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Delete,
   Body,
   UseGuards,
@@ -20,13 +21,18 @@ import { User } from './entities/user.entity';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserRole } from '../common/enums/user-role.enum';
 import { GetUsersQueryDto } from './dto/get-users-query.dto';
+import { BulkDeleteUsersDto } from './dto/bulk-delete-users.dto';
+import { UserPurgeService } from './user-purge.service';
 
 @ApiTags('Users')
 @ApiBearerAuth()
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly purge: UserPurgeService,
+  ) {}
 
   /**
    * Get all users (for admins)
@@ -82,12 +88,35 @@ export class UsersController {
   }
 
   /**
-   * Delete a specific user (admin use)
+   * Permanently delete a customer / driver and every related record
+   * (orders, wallet, documents, tokens, ...). Admin only. Not the NDPA
+   * soft-delete — see UserPurgeService.
    */
   @Delete(':id')
   @Roles(UserRole.ADMIN)
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id') id: string): Promise<void> {
-    await this.usersService.remove(id);
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Permanently delete a user and all related records (Admin only)',
+  })
+  async remove(@Param('id') id: string, @CurrentUser() admin: User) {
+    return this.purge.purge(id, admin);
+  }
+
+  /**
+   * Bulk variant of DELETE /users/:id. Each id is purged in its own
+   * transaction so one blocked account does not roll back the rest.
+   */
+  @Post('bulk-delete')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Permanently delete several users and their related records (Admin only)',
+  })
+  async bulkRemove(
+    @Body() dto: BulkDeleteUsersDto,
+    @CurrentUser() admin: User,
+  ) {
+    return this.purge.purgeMany(dto.ids, admin);
   }
 }

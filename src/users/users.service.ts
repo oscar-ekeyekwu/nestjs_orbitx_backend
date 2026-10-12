@@ -206,14 +206,4 @@ export class UsersService {
       { isPhoneVerified: isVerified },
     );
   }
-
-  async remove(id: string): Promise<void> {
-    const user = await this.findById(id);
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    await this.usersRepository.remove(user);
-  }
 }

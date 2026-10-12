@@ -301,8 +301,7 @@ export class OrdersService {
     // graduates to deprecation once the mobile clients ship the
     // `order_offered` subscription.
     this.safeEmit(
-      () =>
-        this.realtimeGateway.emitOrderOffered(order.packageSize, order),
+      () => this.realtimeGateway.emitOrderOffered(order.packageSize, order),
       'order_offered',
     );
     this.safeEmit(
@@ -925,34 +924,25 @@ export class OrdersService {
       relations: ['driver'],
     });
     if (!order) throw new NotFoundException('Order not found');
-    if (
-      actorRole !== UserRole.ADMIN &&
-      order.customerId !== actorUserId
-    ) {
+    if (actorRole !== UserRole.ADMIN && order.customerId !== actorUserId) {
       throw new ForbiddenException(
         'Only the order owner can view payment instructions.',
       );
     }
     if (!order.driverId) {
-      throw new BadRequestException(
-        'No driver has accepted this order yet.',
-      );
+      throw new BadRequestException('No driver has accepted this order yet.');
     }
 
     // Pull driver_profile via raw query — keeps the orders module
     // out of the DriversModule dependency cycle. Returns null when
     // the profile hasn't filled bank details in.
-    const rows = (await this.ordersRepository.query(
+    const rows = await this.ordersRepository.query(
       `SELECT "bankName", "bankAccountName", "bankAccountNumber"
        FROM driver_profiles
        WHERE "userId" = $1
        LIMIT 1`,
       [order.driverId],
-    )) as Array<{
-      bankName: string | null;
-      bankAccountName: string | null;
-      bankAccountNumber: string | null;
-    }>;
+    );
     const profile = rows[0];
 
     if (
@@ -1015,8 +1005,7 @@ export class OrdersService {
       ConfigKey.ORDER_PAYMENT_PROOF_REQUIRED,
       false,
     );
-    const trimmed =
-      typeof proofUrl === 'string' ? proofUrl.trim() : null;
+    const trimmed = typeof proofUrl === 'string' ? proofUrl.trim() : null;
     if (proofRequired && !trimmed) {
       throw new BadRequestException(
         'A screenshot of your bank transfer is required. Attach a proof image and try again.',
@@ -1030,9 +1019,7 @@ export class OrdersService {
     }
     const saved = await this.ordersRepository.save(order);
 
-    this.logger.log(
-      `Order ${orderId} customer marked paid by ${customerId}`,
-    );
+    this.logger.log(`Order ${orderId} customer marked paid by ${customerId}`);
 
     // Push the driver via the existing realtime gateway. The driver
     // mobile shows a "customer says they've paid — confirm receipt"
@@ -1058,8 +1045,7 @@ export class OrdersService {
         orderId: saved.id,
         driverId: order.driverId,
         amountNaira: Number(saved.finalPrice ?? saved.estimatedPrice),
-        customerName:
-          withCustomer?.customer?.name ?? 'The customer',
+        customerName: withCustomer?.customer?.name ?? 'The customer',
         // Sprint 5 — pass through whether a proof screenshot was
         // attached so the push template can switch its title.
         hasProof: !!saved.paymentProofUrl,
@@ -1102,9 +1088,7 @@ export class OrdersService {
     order.paymentConfirmedAt = new Date();
     const saved = await this.ordersRepository.save(order);
 
-    this.logger.log(
-      `Order ${orderId} payment confirmed by driver ${driverId}`,
-    );
+    this.logger.log(`Order ${orderId} payment confirmed by driver ${driverId}`);
 
     // Notify the customer via socket so the tracking screen flips
     // its banner from "We've notified the driver" to "Payment
@@ -1471,7 +1455,9 @@ export class OrdersService {
    * active order. When the admin has set the cap > 1 to allow batched delivery,
    * this check still enforces THAT ceiling.
    */
-  private async assertDriverUnderActiveOrderCap(driverId: string): Promise<void> {
+  private async assertDriverUnderActiveOrderCap(
+    driverId: string,
+  ): Promise<void> {
     const cap = await this.configService.getNumber(
       ConfigKey.MAX_ORDERS_PER_DRIVER,
       1,

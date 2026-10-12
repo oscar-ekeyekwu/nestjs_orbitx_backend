@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return,
-                  @typescript-eslint/no-unsafe-assignment --
+/* eslint-disable @typescript-eslint/no-unsafe-return --
  * The mocked TypeORM query builder is intentionally `any`-typed for
  * conciseness; the real getRawMany return shape is type-checked at the
  * service site. */

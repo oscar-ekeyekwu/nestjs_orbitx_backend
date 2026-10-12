@@ -377,7 +377,10 @@ export class ConfigController {
     }
 
     if (dto.maxOrdersPerDriver !== undefined) {
-      if (dto.maxOrdersPerDriver < 0 || !Number.isInteger(dto.maxOrdersPerDriver)) {
+      if (
+        dto.maxOrdersPerDriver < 0 ||
+        !Number.isInteger(dto.maxOrdersPerDriver)
+      ) {
         throw new BadRequestException(
           'maxOrdersPerDriver must be a non-negative integer (0 to disable the cap).',
         );

@@ -117,7 +117,7 @@ function buildService(state: State): {
     save: jest.fn(async (entity: DispatchOffer) => {
       const idx = state.offers.findIndex((o) => o.id === entity.id);
       if (idx >= 0) state.offers[idx] = { ...state.offers[idx], ...entity };
-      else state.offers.push(entity as DispatchOffer);
+      else state.offers.push(entity);
       return entity;
     }),
     createQueryBuilder: jest.fn(() => ({
@@ -171,13 +171,16 @@ function buildService(state: State): {
           async (
             entity: unknown,
             opts: {
-              where?: { id?: string; requestId?: string; driverId?: string; status?: string };
+              where?: {
+                id?: string;
+                requestId?: string;
+                driverId?: string;
+                status?: string;
+              };
             },
           ) => {
             if (entity === OrderRequest) {
-              return opts.where?.id === state.request.id
-                ? state.request
-                : null;
+              return opts.where?.id === state.request.id ? state.request : null;
             }
             if (entity === DispatchOffer) {
               const id = opts.where?.id;
@@ -196,7 +199,11 @@ function buildService(state: State): {
           },
         ),
         save: jest.fn(async (entity: any) => {
-          if (entity?.requestId !== undefined && entity?.driverId !== undefined && entity?.type !== undefined) {
+          if (
+            entity?.requestId !== undefined &&
+            entity?.driverId !== undefined &&
+            entity?.type !== undefined
+          ) {
             // It's a DispatchOffer
             const idx = state.offers.findIndex((o) => o.id === entity.id);
             if (idx >= 0) {
@@ -206,7 +213,11 @@ function buildService(state: State): {
             }
             return entity;
           }
-          if (entity?.customerId && entity?.status && 'pickupLatitude' in entity) {
+          if (
+            entity?.customerId &&
+            entity?.status &&
+            'pickupLatitude' in entity
+          ) {
             if ('quotedPrice' in entity) {
               state.request = { ...state.request, ...entity };
               return state.request;

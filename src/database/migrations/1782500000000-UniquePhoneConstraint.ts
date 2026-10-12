@@ -10,9 +10,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * except the oldest row before adding the constraint so the migration
  * can't fail on pre-existing data.
  */
-export class UniquePhoneConstraint1782500000000
-  implements MigrationInterface
-{
+export class UniquePhoneConstraint1782500000000 implements MigrationInterface {
   name = 'UniquePhoneConstraint1782500000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

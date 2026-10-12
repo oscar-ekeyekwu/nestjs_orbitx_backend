@@ -33,7 +33,11 @@ import { ConfigKey } from '../config/enums/config-keys.enum';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { UserRole } from '../common/enums/user-role.enum';
 import { PaymentMethod } from '../wallet/enums/payment-method.enum';
-import { assertInsideLagos, assertInsideNigeria, haversineKm } from '../common/geo';
+import {
+  assertInsideLagos,
+  assertInsideNigeria,
+  haversineKm,
+} from '../common/geo';
 import { Naira, naira } from '../common/money';
 import Decimal from 'decimal.js';
 
@@ -292,9 +296,7 @@ export class OrderRequestsService {
         price = request.quotedPrice;
       } else {
         if (dto.price == null) {
-          throw new BadRequestException(
-            'Counter offers must include a price.',
-          );
+          throw new BadRequestException('Counter offers must include a price.');
         }
         const min = request.quotedPrice
           .times(OrderRequestsService.COUNTER_MIN_MULTIPLIER)
@@ -315,8 +317,8 @@ export class OrderRequestsService {
       // charge + insurance fee (per the user's spec). Insurance is
       // recomputed at offer time from the request snapshot so a config
       // change between request and offer doesn't surprise the driver.
-      const platformCharge = request.platformCharge ?? (naira('0') as Naira);
-      const insurance = request.insuranceFee ?? (naira('0') as Naira);
+      const platformCharge = request.platformCharge ?? naira('0');
+      const insurance = request.insuranceFee ?? naira('0');
       const required = platformCharge.plus(insurance) as Naira;
       const canCover = await this.walletService.canDriverCoverCharge(
         driverId,
@@ -399,7 +401,11 @@ export class OrderRequestsService {
     // Failure here leaves a created Order without a hold (same race
     // window as the legacy accept flow); we log loudly so an oncall
     // reviewer can reconcile.
-    if (txnResult.resolvedOrderId && txnResult.driverId && txnResult.chargeAmount) {
+    if (
+      txnResult.resolvedOrderId &&
+      txnResult.driverId &&
+      txnResult.chargeAmount
+    ) {
       await this.holdChargeAfterCommit(
         txnResult.driverId,
         txnResult.resolvedOrderId,
@@ -693,20 +699,14 @@ export class OrderRequestsService {
   > {
     // Driver gate — must be online + active + idle, and have a
     // current location so we can compute the radius filter.
-    const profileRows = (await this.requestsRepo.query(
+    const profileRows = await this.requestsRepo.query(
       `SELECT "isOnline", "verificationStatus", "isOnDelivery",
               "currentLatitude", "currentLongitude"
        FROM driver_profiles
        WHERE "userId" = $1
        LIMIT 1`,
       [driverId],
-    )) as Array<{
-      isOnline: boolean;
-      verificationStatus: string;
-      isOnDelivery: boolean;
-      currentLatitude: string | null;
-      currentLongitude: string | null;
-    }>;
+    );
     const profile = profileRows[0];
     if (!profile) return [];
     if (
@@ -740,16 +740,14 @@ export class OrderRequestsService {
     // cached `wallets.balance` column was dropped in the
     // WalletBalanceView migration; read from the view so the gate
     // reflects the live ledger.
-    const walletRows = (await this.requestsRepo.query(
+    const walletRows = await this.requestsRepo.query(
       `SELECT wb."balance" FROM "wallet_balances" wb
        INNER JOIN "wallets" w ON w."id" = wb."wallet_id"
        WHERE w."userId" = $1
        LIMIT 1`,
       [driverId],
-    )) as Array<{ balance: string }>;
-    const walletBalance = walletRows[0]
-      ? Number(walletRows[0].balance)
-      : 0;
+    );
+    const walletBalance = walletRows[0] ? Number(walletRows[0].balance) : 0;
 
     const open = await this.requestsRepo.find({
       where: { status: OrderRequestStatus.OPEN },
@@ -759,9 +757,7 @@ export class OrderRequestsService {
     const driverLat = Number(profile.currentLatitude);
     const driverLng = Number(profile.currentLongitude);
 
-    const eligible: Array<
-      OrderRequest & { distanceFromDriverKm: number }
-    > = [];
+    const eligible: Array<OrderRequest & { distanceFromDriverKm: number }> = [];
     for (const r of open) {
       // Skip expired (cron will sweep but a fast read can still see
       // them).
@@ -779,9 +775,7 @@ export class OrderRequestsService {
       if (distanceFromDriverKm > radiusKm) continue;
       eligible.push({ ...r, distanceFromDriverKm });
     }
-    eligible.sort(
-      (a, b) => a.distanceFromDriverKm - b.distanceFromDriverKm,
-    );
+    eligible.sort((a, b) => a.distanceFromDriverKm - b.distanceFromDriverKm);
     return eligible;
   }
 

@@ -20,6 +20,7 @@ import { UserRole } from '../common/enums/user-role.enum';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import { Transaction } from '../wallet/entities/transaction.entity';
 import { StorageCryptoService } from '../storage/crypto.service';
+import { pseudonymiseUser } from '../users/pseudonymise-user';
 
 export interface UserDataExport {
   exportedAt: string;
@@ -348,15 +349,7 @@ export class MeService {
     const sweptUserIds: string[] = [];
     for (const user of rows) {
       try {
-        const tag = `deleted_user_${user.id.slice(0, 8)}`;
-        user.email = `${tag}@deleted.invalid`;
-        user.phone = '';
-        user.first_name = 'Deleted';
-        user.last_name = 'User';
-        user.googleId = '';
-        user.avatar = '';
-        user.isActive = false;
-        user.pseudonymizedAt = now;
+        pseudonymiseUser(user, now);
         await this.users.save(user);
         sweptUserIds.push(user.id);
         this.logger.log(

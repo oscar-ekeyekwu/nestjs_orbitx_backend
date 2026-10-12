@@ -49,7 +49,9 @@ describe('PushFanoutEventSubscribers (ARCH-10)', () => {
         expect.objectContaining({
           notification: expect.objectContaining({
             title: expect.stringMatching(/Customer says/i),
-            body: expect.stringMatching(/Mark Spencer.*₦1,500.*Confirm receipt/i),
+            body: expect.stringMatching(
+              /Mark Spencer.*₦1,500.*Confirm receipt/i,
+            ),
           }),
           data: expect.objectContaining({
             kind: 'order.customer_marked_paid',
@@ -75,7 +77,9 @@ describe('PushFanoutEventSubscribers (ARCH-10)', () => {
         expect.objectContaining({
           notification: expect.objectContaining({
             title: 'Customer paid — screenshot attached',
-            body: expect.stringMatching(/Compare with the attached screenshot/i),
+            body: expect.stringMatching(
+              /Compare with the attached screenshot/i,
+            ),
           }),
           data: expect.objectContaining({ hasProof: 'true' }),
         }),
