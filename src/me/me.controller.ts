@@ -27,13 +27,15 @@ class SetBvnDto {
 class SetDriverBankAccountDto {
   @IsString()
   @Matches(/^[A-Za-z0-9 \-&,.()/]{2,80}$/, {
-    message: 'Bank name must be 2-80 characters of letters, digits, and basic punctuation.',
+    message:
+      'Bank name must be 2-80 characters of letters, digits, and basic punctuation.',
   })
   bankName: string;
 
   @IsString()
   @Matches(/^[A-Za-z .'-]{2,120}$/, {
-    message: 'Account name must be 2-120 letters, spaces, apostrophes, hyphens, or dots.',
+    message:
+      'Account name must be 2-120 letters, spaces, apostrophes, hyphens, or dots.',
   })
   accountName: string;
 

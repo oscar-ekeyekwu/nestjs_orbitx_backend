@@ -150,12 +150,9 @@ export class OrdersController {
   @Get(':id/driver-bank-account')
   @ApiOperation({
     summary:
-      'Read the assigned driver bank account for an order so the customer can transfer offline. Falls back to the platform account when the driver hasn\'t filled their details in.',
+      "Read the assigned driver bank account for an order so the customer can transfer offline. Falls back to the platform account when the driver hasn't filled their details in.",
   })
-  getDriverBankAccount(
-    @Param('id') id: string,
-    @CurrentUser() user: User,
-  ) {
+  getDriverBankAccount(@Param('id') id: string, @CurrentUser() user: User) {
     return this.ordersService.getDriverBankAccount(id, user.id, user.role);
   }
 
@@ -183,10 +180,7 @@ export class OrdersController {
     summary:
       'Driver confirms they received the bank transfer. Flips paymentStatus to completed.',
   })
-  confirmPaymentReceived(
-    @Param('id') id: string,
-    @CurrentUser() user: User,
-  ) {
+  confirmPaymentReceived(@Param('id') id: string, @CurrentUser() user: User) {
     return this.ordersService.confirmPaymentReceived(id, user.id);
   }
 

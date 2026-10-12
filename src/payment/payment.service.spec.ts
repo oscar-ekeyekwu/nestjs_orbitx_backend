@@ -238,9 +238,7 @@ describe('PaymentService (ARCH-13)', () => {
       txManager.findOne
         .mockResolvedValueOnce(txn)
         .mockResolvedValueOnce(wallet);
-      (
-        txManager.createQueryBuilder as jest.Mock
-      ).mockImplementationOnce(() => {
+      txManager.createQueryBuilder.mockImplementationOnce(() => {
         const builder: Record<string, unknown> = {};
         Object.assign(builder, {
           select: jest.fn(() => builder),

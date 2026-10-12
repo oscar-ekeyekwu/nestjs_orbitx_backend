@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return --
- * chained jest mock builder returns are typed `any`. */
 import { PushFanoutEventSubscribers } from './push-fanout.subscribers';
 import type { OrderCreatedEvent } from './push-fanout.subscribers';
 
