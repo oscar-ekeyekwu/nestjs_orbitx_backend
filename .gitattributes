@@ -1,0 +1,25 @@
+# Normalise line endings to LF on every platform.
+#
+# Prettier (endOfLine: lf) and `eslint --fix` always write LF. Without this
+# file, a Windows checkout with core.autocrlf=true expects CRLF in the
+# working tree and reports every file the formatter touches as modified,
+# even though `git diff` is empty. `eol=lf` here overrides core.autocrlf.
+* text=auto eol=lf
+
+# Binaries are never converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.jar binary
+*.apk binary
+*.keystore binary
+*.jks binary
